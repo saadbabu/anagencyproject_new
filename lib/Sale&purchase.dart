@@ -129,6 +129,39 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
     }
   }
 
+  Future<void> _pickSalesDate() async {
+    final now = DateTime.now();
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _parseDate(_salesDateController.text) ?? now,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _salesDateController.text = _formatDate(picked);
+      });
+    }
+  }
+
+// Helper to safely parse dd-MM-yyyy
+  DateTime? _parseDate(String value) {
+    try {
+      final parts = value.split('-');
+      if (parts.length != 3) return null;
+      return DateTime(
+        int.parse(parts[2]),
+        int.parse(parts[1]),
+        int.parse(parts[0]),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+
 
 
   Future<void> _fetchAreasForCurrentUser() async {
@@ -257,7 +290,8 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
 
     final invoiceData = {
       'invoiceNumber': _invoiceNumber,
-      'salesDate': _salesDateController.text,
+      'salesDate': _salesDateController.text,                // display
+      'salesDateTs': _salesDateToTimestamp(_salesDateController.text),                         // ✅ NEW
       'customer': selectedCustomer,
       'area': selectedArea,
       'items': rows,
@@ -266,7 +300,7 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
       'discountValue': _discountController.text.trim(),
       'total': _total,
       'grandTotal': _grandTotal,
-      'createdAt': DateTime.now(),
+      'createdAt': DateTime.now(),                            // keep
       'userId': user.uid,
       'userEmail': user.email ?? "",
     };
@@ -427,6 +461,15 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
     final h = MediaQuery.of(context).size.height;
     return (h / _baseHeight).clamp(0.75, 1.2);
   }
+  Timestamp _salesDateToTimestamp(String ddMMyyyy) {
+    final parts = ddMMyyyy.split('-');
+    final d = int.parse(parts[0]);
+    final m = int.parse(parts[1]);
+    final y = int.parse(parts[2]);
+
+    // Store as LOCAL midnight
+    return Timestamp.fromDate(DateTime(y, m, d));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -480,10 +523,21 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
                   Expanded(
                     child: _buildDropdownField(
                       "Sales Date",
-                      TextFormField(controller: _salesDateController),
+                      TextFormField(
+                        controller: _salesDateController,
+                        readOnly: true,                // ✅ prevents keyboard
+                        onTap: _pickSalesDate,          // ✅ opens date picker
+                        decoration: const InputDecoration(
+                          suffixIcon: Icon(Icons.calendar_today),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                        ),
+                      ),
                       labelFont,
                     ),
                   ),
+
                 ],
               ),
 

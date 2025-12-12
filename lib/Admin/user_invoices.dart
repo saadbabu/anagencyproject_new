@@ -242,6 +242,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                     onPressed: () => _printReport(data),
                   ),
+                  // EDIT
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit, color: Colors.white),
+                    label: const Text("Edit"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+                    onPressed: () {
+                      Navigator.pop(context); // close bottom sheet
+                      _showEditInvoicePopup(docId, data);
+                    },
+                  ),
+
                   ElevatedButton.icon(
                     icon: const Icon(Icons.delete, color: Colors.white),
                     label: const Text("Delete"),
@@ -259,6 +270,271 @@ class _ReportsScreenState extends State<ReportsScreen> {
       ),
     );
   }
+
+  void _showEditInvoicePopup(String docId, Map<String, dynamic> data) {
+    final customerCtrl = TextEditingController(text: data['customer'] ?? '');
+    final areaCtrl = TextEditingController(text: data['area'] ?? '');
+    final dateCtrl = TextEditingController(text: data['salesDate'] ?? '');
+
+    // ===== ITEMS LIST =====
+    List<Map<String, dynamic>> items =
+    List<Map<String, dynamic>>.from(data["items"] ?? []);
+
+    // ===== SAFE DISCOUNT PARSING =====
+    num discountPercent =
+        num.tryParse(data['discountPercent']?.toString() ?? "0") ?? 0;
+
+    num discountValue =
+        num.tryParse(data['discountValue']?.toString() ?? "0") ?? 0;
+
+    String discountType = data['discountType']?.toString() ?? "flat";
+
+    // =======================================================
+    // FUNCTIONS FOR TOTAL CALCULATION
+    // =======================================================
+
+    num calculateTotal() {
+      num total = 0;
+      for (var item in items) {
+        num gross = num.tryParse(item["Gross Total"]?.toString() ?? "0") ?? 0;
+        total += gross;
+      }
+      return total;
+    }
+
+    num calculateGrandTotal() {
+      num total = calculateTotal();
+      if (discountType == "percent") {
+        return total - (total * discountPercent / 100);
+      } else {
+        return total - discountValue;
+      }
+    }
+
+    void recalcRow(int i) {
+      num tp = num.tryParse(items[i]["TP"]?.toString() ?? "0") ?? 0;
+      num qty = num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0;
+      items[i]["Gross Total"] = (tp * qty).toStringAsFixed(2);
+    }
+
+    // =======================================================
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: const Text("Edit Invoice", style: TextStyle(fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 550,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // CUSTOMER
+                    TextField(
+                      controller: customerCtrl,
+                      decoration: const InputDecoration(labelText: "Customer"),
+                    ),
+
+                    // AREA
+                    TextField(
+                      controller: areaCtrl,
+                      decoration: const InputDecoration(labelText: "Area"),
+                    ),
+
+                    // DATE
+                    TextField(
+                      controller: dateCtrl,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        labelText: "Sales Date",
+                        suffixIcon: Icon(Icons.date_range),
+                      ),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: DateTime.now(),
+                          firstDate: DateTime(2023),
+                          lastDate: DateTime(2030),
+                        );
+                        if (picked != null) {
+                          dateCtrl.text =
+                              DateFormat("dd-MM-yyyy").format(picked);
+                        }
+                      },
+                    ),
+
+                    const SizedBox(height: 15),
+                    const Divider(),
+                    const Text("Invoice Items",
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 10),
+
+                    // ========= ITEMS LIST ==========
+                    Column(
+                      children: List.generate(items.length, (i) {
+                        return Card(
+                          elevation: 2,
+                          margin: const EdgeInsets.symmetric(vertical: 6),
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Column(
+                              children: [
+                                TextField(
+                                  decoration: const InputDecoration(labelText: "Product Name"),
+                                  controller: TextEditingController(
+                                      text: items[i]["Product Name"]?.toString() ?? ""),
+                                  onChanged: (v) => items[i]["Product Name"] = v,
+                                ),
+
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextField(
+                                        decoration: const InputDecoration(labelText: "TP"),
+                                        keyboardType: TextInputType.number,
+                                        controller: TextEditingController(
+                                            text: items[i]["TP"]?.toString() ?? "0"),
+                                        onChanged: (v) {
+                                          items[i]["TP"] = v;
+                                          recalcRow(i);
+                                          setState(() {});
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: TextField(
+                                        decoration: const InputDecoration(labelText: "QTY"),
+                                        keyboardType: TextInputType.number,
+                                        controller: TextEditingController(
+                                            text: items[i]["QTY"]?.toString() ?? "0"),
+                                        onChanged: (v) {
+                                          items[i]["QTY"] = v;
+                                          recalcRow(i);
+                                          setState(() {});
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 6),
+
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    "Gross: ${items[i]["Gross Total"]}",
+                                    style: const TextStyle(
+                                        color: Colors.green,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () {
+                                      items.removeAt(i);
+                                      setState(() {});
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+
+                    // ===== Add Product Button =====
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text("Add Product"),
+                      onPressed: () {
+                        setState(() {
+                          items.add({
+                            "Product Name": "",
+                            "TP": "0",
+                            "QTY": "0",
+                            "BNS": "0",
+                            "Gross Total": "0",
+                          });
+                        });
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                    ),
+
+                    const Divider(),
+
+                    // ================= TOTALS DISPLAY =====================
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Total: ${calculateTotal().toStringAsFixed(2)}"),
+                          Text(
+                              "Discount: ${discountType == 'percent' ? '$discountPercent%' : discountValue}"),
+                          Text(
+                            "Grand Total: ${calculateGrandTotal().toStringAsFixed(2)}",
+                            style: const TextStyle(
+                                color: Colors.green, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ================= SAVE / CANCEL ACTIONS ======================
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+                child: const Text("Save"),
+                onPressed: () async {
+                  await FirebaseFirestore.instance
+                      .collection("invoices")
+                      .doc(docId)
+                      .update({
+                    "customer": customerCtrl.text.trim(),
+                    "area": areaCtrl.text.trim(),
+                    "salesDate": dateCtrl.text.trim(),
+                    "items": items,
+                    "total": calculateTotal(),
+                    "discountType": discountType,
+                    "discountPercent": discountPercent,
+                    "discountValue": discountValue,
+                    "grandTotal": calculateGrandTotal(),
+                    "updatedAt": DateTime.now(),
+                  });
+
+                  Navigator.pop(context);
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Invoice Updated Successfully")),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
+
 
   /// ========= BUILD QUERY (DATE + USER + TOGGLE) =========
   Query _buildQuery() {

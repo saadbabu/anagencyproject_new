@@ -286,6 +286,41 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       _toast("Print failed: $e", err: true);
     }
   }
+  Future<String> _getUsernameFromSessionsByEmail(String? email) async {
+    if (email == null || email.trim().isEmpty) return "Unknown";
+
+    final snap = await db
+        .collection("sessions")
+        .where("email", isEqualTo: email.trim())
+        .limit(1)
+        .get();
+
+    if (snap.docs.isEmpty) return "Unknown";
+
+    final data = snap.docs.first.data();
+    final username = (data["username"] ?? "").toString().trim();
+    return username.isEmpty ? "Unknown" : username;
+  }
+
+  Future<String> _getAreasForTodayByUser(String userId) async {
+    final (startUtc, endUtc) = _todayCreatedRange();
+
+    final snap = await db
+        .collection("invoices")
+        .where("createdAt", isGreaterThanOrEqualTo: startUtc)
+        .where("createdAt", isLessThan: endUtc)
+        .where("userId", isEqualTo: userId)
+        .get();
+
+    final areas = snap.docs
+        .map((d) => (d.data()["area"] ?? "").toString().trim())
+        .where((a) => a.isNotEmpty)
+        .toSet()
+        .toList();
+
+    return areas.isEmpty ? "-" : areas.join(", ");
+  }
+
 
   // -------------------- COMPUTE FROM INVOICES --------------------
 
@@ -293,12 +328,12 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception("Not logged in");
 
-    final (startUtc, endUtc) = _todayUtcRange();
+    final (start, end) = _todayCreatedRange();
 
     final q = await db
         .collection("invoices")
-        .where("createdAt", isGreaterThanOrEqualTo: startUtc)
-        .where("createdAt", isLessThan: endUtc)
+        .where("createdAt", isGreaterThanOrEqualTo: start)
+        .where("createdAt", isLessThan: end)
         .where("userId", isEqualTo: user.uid)
         .get();
 
@@ -321,8 +356,10 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         final gross = _parseDouble((it["Gross Total"] ?? "0").toString());
 
         qty[name] = (qty[name] ?? 0) + q;
-        bns[name] = (bns[name] ?? 0) + _parseIntish((it["BNS"] ?? "0").toString());
-        amount[name] = (amount[name] ?? 0.0) + (tp > 0 ? q * tp : gross);
+        bns[name] =
+            (bns[name] ?? 0) + _parseIntish((it["BNS"] ?? "0").toString());
+        amount[name] =
+            (amount[name] ?? 0.0) + (tp > 0 ? q * tp : gross);
       }
     }
 
@@ -353,10 +390,19 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     );
   }
 
+
   // -------------------- PDF --------------------
 
   Future<pw.Document> _buildPdf(_LoadSheet s) async {
     final pdf = pw.Document();
+
+    // 🔹 Fetch username
+    final printedUsername =
+    await _getUsernameFromSessionsByEmail(s.userEmail);
+
+    // 🔹 Fetch areas dynamically from invoices
+    final printedAreas =
+    s.userId == null ? "-" : await _getAreasForTodayByUser(s.userId!);
 
     final rows =
     [...s.items]..sort((a, b) => a.productName.compareTo(b.productName));
@@ -366,46 +412,147 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(24),
         build: (context) => [
-          pw.Header(
-            level: 0,
-            child: pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text(
-                  "A.N Agency",
-                  style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.Text(
-                  "Load Sheet",
-                  style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.Text(s.dateStr),
-              ],
-            ),
-          ),
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              // HEADER
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    "A.N Agency",
+                    style: pw.TextStyle(
+                        fontSize: 20, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text(
+                    "Load Sheet",
+                    style: pw.TextStyle(
+                        fontSize: 20, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text(s.dateStr),
+                ],
+              ),
 
-          pw.Table.fromTextArray(
-            headers: const ["Product", "Qty", "BNS", "Amount (PKR)"],
-            data: rows
-                .map((r) => [
-              r.productName,
-              r.qty.toString(),
-              r.bns.toString(),
-              _fmtMoney(r.amount),
-            ])
-                .toList(),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            headerDecoration:
-            const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDEDED)),
-            cellAlignment: pw.Alignment.centerLeft,
-          ),
+              pw.SizedBox(height: 6),
 
-          pw.SizedBox(height: 12),
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
-            child: pw.Text(
-              "Totals  Qty: ${s.totals.sumQty}   BNS: ${s.totals.sumBns}   Total Sale: PKR ${_fmtMoney(s.totals.sumAmount)}",
-            ),
+              // ✅ USER + AREA (LIKE DSR)
+              pw.Text(
+                "User: $printedUsername (${s.userEmail ?? "-"}) | Area: $printedAreas",
+                style: pw.TextStyle(
+                  fontSize: 11,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.grey700,
+                ),
+              ),
+
+              pw.SizedBox(height: 16),
+
+              // ================= TABLE =================
+              pw.Table(
+                border: pw.TableBorder.all(),
+                children: [
+                  // HEADER ROW
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColor.fromInt(0xFFEDEDED),
+                    ),
+                    children: [
+                      pw.Padding(
+                        padding: pw.EdgeInsets.all(6),
+                        child: pw.Text("Product",
+                            style:
+                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                      ),
+                      pw.Padding(
+                        padding: pw.EdgeInsets.all(6),
+                        child: pw.Text("Qty",
+                            style:
+                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                      ),
+                      pw.Padding(
+                        padding: pw.EdgeInsets.all(6),
+                        child: pw.Text("BNS",
+                            style:
+                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                      ),
+                      pw.Padding(
+                        padding: pw.EdgeInsets.all(6),
+                        child: pw.Text("Amount (PKR)",
+                            style:
+                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+
+                  // DATA ROWS
+                  ...rows.map(
+                        (r) => pw.TableRow(
+                      children: [
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(r.productName),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(r.qty.toString()),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(r.bns.toString()),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(_fmtMoney(r.amount)),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ✅ TOTAL ROW (LIKE DSR)
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColor.fromInt(0xFFF5F5F5),
+                    ),
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          "TOTAL",
+                          style:
+                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          s.totals.sumQty.toString(),
+                          style:
+                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          s.totals.sumBns.toString(),
+                          style:
+                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          _fmtMoney(s.totals.sumAmount),
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.green800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
           ),
         ],
       ),
@@ -414,17 +561,20 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     return pdf;
   }
 
+
+
   // -------------------- UTILS --------------------
 
-  (Timestamp, Timestamp) _todayUtcRange() {
+  (Timestamp, Timestamp) _todayCreatedRange() {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
     final end = start.add(const Duration(days: 1));
     return (
-    Timestamp.fromDate(start.toUtc()),
-    Timestamp.fromDate(end.toUtc())
+    Timestamp.fromDate(start),
+    Timestamp.fromDate(end),
     );
   }
+
 
   String _todayStr() {
     final n = DateTime.now();

@@ -264,6 +264,23 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
     }
   }
 
+  Future<String> _getUsernameFromSessionsByEmail(String? email) async {
+    if (email == null || email.trim().isEmpty) return "Unknown";
+
+    final snap = await db
+        .collection("sessions")
+        .where("email", isEqualTo: email.trim())
+        .limit(1)
+        .get();
+
+    if (snap.docs.isEmpty) return "Unknown";
+
+    final data = snap.docs.first.data();
+    final username = (data["username"] ?? "").toString().trim();
+    return username.isEmpty ? "Unknown" : username;
+  }
+
+
   Future<void> _loadTodayReport() async {
     setState(() => _busy = true);
     try {
@@ -304,14 +321,14 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
   // COMPUTE INVOICE-WISE DSR
   // ----------------------
   Future<InvoiceDsrReport> _computeTodayReportFromInvoices() async {
-    final (startUtc, endUtc) = _todayUtcRange();
+    final (start, end) = _todayCreatedRange();
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception("Not logged in");
 
     final snap = await db
         .collection('invoices')
-        .where('createdAt', isGreaterThanOrEqualTo: startUtc)
-        .where('createdAt', isLessThan: endUtc)
+        .where('createdAt', isGreaterThanOrEqualTo: start)
+        .where('createdAt', isLessThan: end)
         .where('userId', isEqualTo: user.uid)
         .get();
 
@@ -319,22 +336,19 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
 
     for (var doc in snap.docs) {
       final data = doc.data();
-
       final customer = (data['customer'] ?? '').toString();
       final items = (data['items'] as List?) ?? [];
+      final area = (data['area'] ?? '').toString();
 
       final totalSale = (data['total'] ?? 0).toDouble();
       final netSale = (data['grandTotal'] ?? totalSale).toDouble();
       final discount = totalSale - netSale;
 
       final productQty = <String, int>{};
-
       for (var it in items) {
         if (it is! Map) continue;
-
         final prod = (it['Product Name'] ?? '').toString();
-        final qty = int.tryParse((it['QTY'] ?? "0").toString()) ?? 0;
-
+        final qty = int.tryParse((it['QTY'] ?? '0').toString()) ?? 0;
         if (prod.isNotEmpty) productQty[prod] = qty;
       }
 
@@ -344,6 +358,7 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
         totalSale: totalSale,
         discount: discount,
         netSale: netSale,
+        area: area
       ));
     }
 
@@ -356,14 +371,25 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
     );
   }
 
+
   // ----------------------
   // PDF BUILDER
   // ----------------------
   Future<pw.Document> _buildPdf(InvoiceDsrReport rep) async {
     final pdf = pw.Document();
 
+    // Fetch username using email from sessions
+    final printedUsername = await _getUsernameFromSessionsByEmail(rep.userEmail);
+    final areas = rep.rows
+        .map((r) => r.area)
+        .where((a) => a.trim().isNotEmpty)
+        .toSet()
+        .join(", ");
+
     final allProducts = <String>{};
-    for (var r in rep.rows) allProducts.addAll(r.productQty.keys);
+    for (var r in rep.rows) {
+      allProducts.addAll(r.productQty.keys);
+    }
     final productList = allProducts.toList()..sort();
 
     final headers = [
@@ -372,52 +398,74 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
       ...productList,
       "Total Sale",
       "Discount",
-      "Net Sale"
+      "Net Sale",
     ];
+
+    // Totals
+    final totalSaleSum = rep.rows.fold<double>(0, (sum, r) => sum + r.totalSale);
+    final netSaleSum = rep.rows.fold<double>(0, (sum, r) => sum + r.netSale);
+    final discountSum = totalSaleSum - netSaleSum;
 
     pdf.addPage(
       pw.MultiPage(
         margin: const pw.EdgeInsets.all(20),
         build: (context) => [
-          pw.Header(
-            level: 0,
-            child: pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text(
-                  "A.N Agency",
-                  style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    "A.N Agency",
+                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text(
+                    "Daily Sales Report",
+                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text(rep.dateStr),
+                ],
+              ),
+
+              pw.SizedBox(height: 6),
+
+              // ✅ Username line
+              pw.Text(
+                "User: $printedUsername (${rep.userEmail ?? "-"})   |   Area: ${areas.isEmpty ? "-" : areas}",
+                style: pw.TextStyle(
+                  fontSize: 11,
+                  color: PdfColors.grey700,
+                  fontWeight: pw.FontWeight.bold,
                 ),
-                pw.Text(
-                  "Daily Sales Report",
-                  style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.Text(rep.dateStr),
-              ],
-            ),
+              ),
+
+              pw.SizedBox(height: 16),
+            ],
           ),
-          pw.SizedBox(height: 20),
 
           pw.Table(
             border: pw.TableBorder.all(),
             children: [
-              // Header Row
+              // Header row
               pw.TableRow(
                 decoration: const pw.BoxDecoration(
                   color: PdfColor.fromInt(0xFFE0E0E0),
                 ),
                 children: headers
-                    .map((h) => pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text(
-                    h,
-                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    .map(
+                      (h) => pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(
+                      h,
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
                   ),
-                ))
+                )
                     .toList(),
               ),
 
-              // Data Rows
+              // Data rows
               ...List.generate(rep.rows.length, (i) {
                 final row = rep.rows[i];
 
@@ -432,13 +480,13 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
                       child: pw.Text(row.customer),
                     ),
 
-                    // Product columns
-                    ...productList.map((p) => pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text("${row.productQty[p] ?? 0}"),
-                    )),
+                    ...productList.map(
+                          (p) => pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text("${row.productQty[p] ?? 0}"),
+                      ),
+                    ),
 
-                    // Convert decimal → int in TOTALS
                     pw.Padding(
                       padding: const pw.EdgeInsets.all(6),
                       child: pw.Text(_formatInt(row.totalSale)),
@@ -453,7 +501,60 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
                     ),
                   ],
                 );
-              })
+              }),
+
+              // ✅ Totals row
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(
+                  color: PdfColor.fromInt(0xFFF5F5F5),
+                ),
+                children: [
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(""),
+                  ),
+
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(
+                      "TOTAL",
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
+                  ),
+
+                  ...productList.map(
+                        (_) => pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Text(""),
+                    ),
+                  ),
+
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(
+                      _formatInt(totalSaleSum),
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(
+                      _formatInt(discountSum),
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(
+                      _formatInt(netSaleSum),
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.green800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ],
@@ -464,18 +565,21 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
   }
 
 
+
   // ----------------------
   // UTILITIES
   // ----------------------
-  (Timestamp startUtc, Timestamp endUtc) _todayUtcRange() {
-    final nowLocal = DateTime.now();
-    final startLocal = DateTime(nowLocal.year, nowLocal.month, nowLocal.day);
-    final endLocal = startLocal.add(const Duration(days: 1));
+  (Timestamp start, Timestamp end) _todayCreatedRange() {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day);
+    final end = start.add(const Duration(days: 1));
     return (
-    Timestamp.fromDate(startLocal.toUtc()),
-    Timestamp.fromDate(endLocal.toUtc()),
+    Timestamp.fromDate(start),
+    Timestamp.fromDate(end),
     );
   }
+
+
 
   String _todayStr() {
     final now = DateTime.now();
@@ -508,6 +612,7 @@ String _formatInt(double value) {
 
 class InvoiceDsrRow {
   final String customer;
+  final String area; // ✅ NEW
   final Map<String, int> productQty;
   final double totalSale;
   final double discount;
@@ -515,6 +620,7 @@ class InvoiceDsrRow {
 
   InvoiceDsrRow({
     required this.customer,
+    required this.area,
     required this.productQty,
     required this.totalSale,
     required this.discount,
@@ -524,6 +630,7 @@ class InvoiceDsrRow {
   Map<String, dynamic> toMap() {
     return {
       'customer': customer,
+      'area': area, // ✅ stored
       'productQty': productQty.map((k, v) => MapEntry(k, v)),
       'totalSale': totalSale,
       'discount': discount,
@@ -534,6 +641,7 @@ class InvoiceDsrRow {
   static InvoiceDsrRow fromMap(Map<String, dynamic> m) {
     return InvoiceDsrRow(
       customer: m['customer'],
+      area: (m['area'] ?? '').toString(), // ✅ safe
       productQty: Map<String, int>.from(m['productQty']),
       totalSale: (m['totalSale'] ?? 0).toDouble(),
       discount: (m['discount'] ?? 0).toDouble(),
@@ -541,6 +649,7 @@ class InvoiceDsrRow {
     );
   }
 }
+
 
 class InvoiceDsrReport {
   final String dateStr;
