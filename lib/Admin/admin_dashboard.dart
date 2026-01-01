@@ -190,7 +190,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _dashboardPage(),
       StockAndSalesScreen(),
       AddAreaPage(),
-      AddShopScreen(),
+      ProductFormScreen(),
       AllocateCustomerPage(),
       ReportsScreen(),
       AdminDSRReportsScreen(),

@@ -25,6 +25,9 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
 
   bool showLoadsheets = false;
 
+  // ✅ Loader for Print All delay
+  bool _printingAll = false;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +55,233 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
     });
   }
 
+  // ✅ same helper as employee side (admin-side use)
+  Future<String> _getUsernameFromSessionsByEmail(String? email) async {
+    if (email == null || email.trim().isEmpty) return "Unknown";
+
+    final snap = await _firestore
+        .collection("sessions")
+        .where("email", isEqualTo: email.trim())
+        .limit(1)
+        .get();
+
+    if (snap.docs.isEmpty) return "Unknown";
+
+    final data = snap.docs.first.data();
+    final username = (data["username"] ?? "").toString().trim();
+    return username.isEmpty ? "Unknown" : username;
+  }
+
+  // ✅ areas extractor (admin-side use)
+  String _extractAreasFromDsr(Map<String, dynamic> data) {
+    final rows = List<Map<String, dynamic>>.from(data["rows"] ?? []);
+    final areas = rows
+        .map((r) => (r["area"] ?? "").toString().trim())
+        .where((a) => a.isNotEmpty)
+        .toSet()
+        .join(", ");
+    return areas.isEmpty ? "-" : areas;
+  }
+
+  Widget _numField(String label, dynamic value, Function(int) onChanged) {
+    return SizedBox(
+      width: 80,
+      child: TextFormField(
+        initialValue: "$value",
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(labelText: label),
+        onChanged: (v) => onChanged(int.tryParse(v) ?? 0),
+      ),
+    );
+  }
+
+  void _editLoadsheet(Map<String, dynamic> data) {
+    final items = List<Map<String, dynamic>>.from(data["items"] ?? []);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("Edit Loadsheet",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Divider(),
+
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: items.length,
+                      itemBuilder: (_, i) {
+                        final item = items[i];
+                        return ListTile(
+                          title: Text(item["productName"]),
+                          subtitle: Row(
+                            children: [
+                              _numField("Qty", item["qty"], (v) {
+                                item["qty"] = v;
+                                setModalState(() {});
+                              }),
+                              const SizedBox(width: 8),
+                              _numField("Bns", item["bns"], (v) {
+                                item["bns"] = v;
+                                setModalState(() {});
+                              }),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  ElevatedButton(
+                    child: const Text("SAVE"),
+                    onPressed: () async {
+                      await _firestore
+                          .collection("load_sheets")
+                          .doc(data["id"])
+                          .update({"items": items});
+                      Navigator.pop(context);
+                    },
+                  )
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _editDsr(Map<String, dynamic> data) {
+    final rows = List<Map<String, dynamic>>.from(data["rows"] ?? []);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              return Column(
+                children: [
+                  const Text(
+                    "Edit DSR",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const Divider(),
+
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: rows.length,
+                      itemBuilder: (_, i) {
+                        final r = rows[i];
+
+                        double totalSale =
+                        (r["totalSale"] ?? 0).toDouble();
+                        double discount =
+                        (r["discount"] ?? 0).toDouble();
+                        double netSale = totalSale - discount;
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Customer
+                                TextFormField(
+                                  initialValue: r["customer"],
+                                  decoration: const InputDecoration(
+                                    labelText: "Customer",
+                                  ),
+                                  onChanged: (v) => r["customer"] = v,
+                                ),
+
+                                const SizedBox(height: 8),
+
+                                // Total Sale (READ ONLY)
+                                Text(
+                                  "Total Sale: ${totalSale.toStringAsFixed(2)}",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+
+                                const SizedBox(height: 8),
+
+                                // Discount (EDITABLE)
+                                TextFormField(
+                                  initialValue: discount.toStringAsFixed(0),
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: "Discount",
+                                  ),
+                                  onChanged: (v) {
+                                    final d =
+                                        double.tryParse(v) ?? 0;
+                                    r["discount"] = d;
+                                    r["netSale"] = totalSale - d;
+                                    setModalState(() {});
+                                  },
+                                ),
+
+                                const SizedBox(height: 6),
+
+                                // Net Sale (AUTO)
+                                Text(
+                                  "Net Sale: ${(totalSale - discount).toStringAsFixed(2)}",
+                                  style: const TextStyle(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  ElevatedButton(
+                    child: const Text("SAVE CHANGES"),
+                    onPressed: () async {
+                      await _firestore
+                          .collection("dsr_reports")
+                          .doc(data["id"])
+                          .update({"rows": rows});
+
+                      Navigator.pop(context);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("DSR updated successfully"),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+
+
+
   // --------------------------
   //  BUILD QUERY
   // --------------------------
@@ -72,7 +302,7 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
   }
 
   // --------------------------
-  // PRINT ALL
+  // PRINT ALL (WITH LOADER)
   // --------------------------
   Future<void> _printAllReports(List<QueryDocumentSnapshot> docs) async {
     if (docs.isEmpty) {
@@ -81,15 +311,38 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
       return;
     }
 
+    setState(() => _printingAll = true);
+
     final pdf = pw.Document();
 
-    for (var d in docs) {
-      final data = d.data() as Map<String, dynamic>;
-      pdf.addPage(pw.Page(
-          build: (_) => showLoadsheets ? _pdfLoadsheet(data) : _pdfDSR(data)));
-    }
+    try {
+      for (var d in docs) {
+        final data = d.data() as Map<String, dynamic>;
 
-    await Printing.layoutPdf(onLayout: (_) => pdf.save());
+        final email = data['userEmail'];
+        final username = await _getUsernameFromSessionsByEmail(email);
+        final areas = showLoadsheets ? "-" : _extractAreasFromDsr(data);
+
+        pdf.addPage(
+          pw.Page(
+            build: (_) => showLoadsheets
+                ? _pdfLoadsheet(data)
+                : _pdfDSR(data, username, areas),
+          ),
+        );
+      }
+
+      await Printing.layoutPdf(onLayout: (_) => pdf.save());
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Print failed: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _printingAll = false);
+    }
   }
 
   // --------------------------
@@ -97,13 +350,24 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
   // --------------------------
   Future<void> _printSingle(Map<String, dynamic> data) async {
     final pdf = pw.Document();
-    pdf.addPage(pw.Page(
-        build: (_) => showLoadsheets ? _pdfLoadsheet(data) : _pdfDSR(data)));
+
+    final email = data['userEmail'];
+    final username = await _getUsernameFromSessionsByEmail(email);
+    final areas = showLoadsheets ? "-" : _extractAreasFromDsr(data);
+
+    pdf.addPage(
+      pw.Page(
+        build: (_) => showLoadsheets
+            ? _pdfLoadsheet(data)
+            : _pdfDSR(data, username, areas),
+      ),
+    );
+
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
   }
 
   // --------------------------
-  // PDF for LOADSHEETS
+  // PDF for LOADSHEETS (UNCHANGED FROM YOUR STYLE)
   // --------------------------
   pw.Widget _pdfLoadsheet(Map<String, dynamic> data) {
     final List<Map<String, dynamic>> items =
@@ -121,7 +385,6 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Header
         pw.Header(
           level: 0,
           child: pw.Row(
@@ -145,18 +408,19 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
             ],
           ),
         ),
-
         pw.SizedBox(height: 10),
-
-        // LoadSheet Table
         pw.Table.fromTextArray(
           headers: const ["Product", "Qty", "BNS", "Amount (PKR)"],
           data: items.map((i) {
+            final amount = (i["amount"] ?? 0);
+            final amountNum =
+            amount is num ? amount.toDouble() : double.tryParse("$amount") ?? 0;
+
             return [
               i["productName"] ?? "",
               "${i["qty"] ?? 0}",
               "${i["bns"] ?? 0}",
-              "${(i["amount"] ?? 0).toStringAsFixed(2)}",
+              amountNum.toStringAsFixed(2),
             ];
           }).toList(),
           headerStyle: pw.TextStyle(
@@ -170,27 +434,18 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
           cellPadding: const pw.EdgeInsets.all(6),
           border: pw.TableBorder.all(color: PdfColors.grey700),
         ),
-
         pw.SizedBox(height: 18),
-
-        // Summary Section
         pw.Align(
           alignment: pw.Alignment.centerRight,
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.end,
             children: [
-              pw.Text(
-                "Unique Products: ${totals["uniqueProducts"] ?? 0}",
-                style: pw.TextStyle(fontSize: 12),
-              ),
-              pw.Text(
-                "Total Qty: ${totals["sumQty"] ?? 0}",
-                style: pw.TextStyle(fontSize: 12),
-              ),
-              pw.Text(
-                "Total BNS: ${totals["sumBns"] ?? 0}",
-                style: pw.TextStyle(fontSize: 12),
-              ),
+              pw.Text("Unique Products: ${totals["uniqueProducts"] ?? 0}",
+                  style: pw.TextStyle(fontSize: 12)),
+              pw.Text("Total Qty: ${totals["sumQty"] ?? 0}",
+                  style: pw.TextStyle(fontSize: 12)),
+              pw.Text("Total BNS: ${totals["sumBns"] ?? 0}",
+                  style: pw.TextStyle(fontSize: 12)),
               pw.Text(
                 "Total Sale: PKR ${(totals["sumAmount"] ?? 0).toStringAsFixed(2)}",
                 style: pw.TextStyle(
@@ -205,36 +460,32 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
     );
   }
 
-
   // --------------------------
-  // PDF for NEW DSR
+  // PDF for DSR (SYNC ONLY) + USERNAME + AREA FIXED
   // --------------------------
-  // --------------------------
-// UPDATED PDF for NEW DSR — TEMPLATE EXACT MATCH
-// --------------------------
-  pw.Widget _pdfDSR(Map<String, dynamic> data) {
+  pw.Widget _pdfDSR(
+      Map<String, dynamic> data,
+      String username,
+      String areas,
+      ) {
     final rows = List<Map<String, dynamic>>.from(data["rows"] ?? []);
+    final email = data['userEmail'];
 
     final allProducts = <String>{};
-
     for (var r in rows) {
       final productMap = (r["productQty"] as Map?) ?? {};
-      allProducts.addAll(
-          productMap.keys.map((k) => k.toString())  // <-- FIX HERE
-      );
+      allProducts.addAll(productMap.keys.map((k) => k.toString()));
     }
-
     final productList = allProducts.toList()..sort();
 
     final headers = <String>[
       "ID",
       "Customer",
-      ...productList,   // NOW SAFE
+      ...productList,
       "Total Sale",
       "Discount",
-      "Net Sale"
+      "Net Sale",
     ];
-
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -246,25 +497,32 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
             children: [
               pw.Text(
                 "A.N Agency",
-                style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+                style:
+                pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
               ),
               pw.Text(
                 "Daily Sales Report",
-                style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+                style:
+                pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
               ),
-              // pw.Text(rep.dateStr),
+              pw.Text(data["dateStr"] ?? ''),
             ],
           ),
         ),
-        pw.SizedBox(height: 10),
-        pw.Text("User: ${data['userEmail']}"),
-        pw.Text("Date: ${data['dateStr']}"),
-        pw.SizedBox(height: 20),
+        pw.SizedBox(height: 6),
+        pw.Text(
+          "User: $username (${email ?? "-"})   |   Area: $areas",
+          style: pw.TextStyle(
+            fontSize: 11,
+            color: PdfColors.grey700,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.SizedBox(height: 16),
 
         pw.Table(
           border: pw.TableBorder.all(),
           children: [
-            // Header
             pw.TableRow(
               decoration: const pw.BoxDecoration(
                 color: PdfColor.fromInt(0xFFE0E0E0),
@@ -279,8 +537,6 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
               ))
                   .toList(),
             ),
-
-            // Rows
             ...List.generate(rows.length, (i) {
               final r = rows[i];
               final productQty = (r["productQty"] as Map?) ?? {};
@@ -293,7 +549,6 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
                   pw.Padding(
                       padding: const pw.EdgeInsets.all(6),
                       child: pw.Text("${r["customer"]}")),
-                  // Product Columns
                   ...productList.map((p) => pw.Padding(
                     padding: const pw.EdgeInsets.all(6),
                     child: pw.Text("${productQty[p] ?? 0}"),
@@ -312,58 +567,13 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
             }),
           ],
         ),
-
-        pw.SizedBox(height: 20),
-
-        // SUMMARY (Optional)
-        pw.Text("Summary",
-            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-
-        pw.SizedBox(height: 10),
-
-        pw.Table(
-          border: pw.TableBorder.all(color: PdfColors.grey),
-          children: [
-            pw.TableRow(children: [
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text("Total Invoices",
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text("${rows.length}")),
-            ]),
-            pw.TableRow(children: [
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text("Total Sale",
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text(rows
-                      .fold<double>(0, (a, b) => a + (b["totalSale"] ?? 0))
-                      .toStringAsFixed(2))),
-            ]),
-            pw.TableRow(children: [
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text("Net Sale",
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-              pw.Padding(
-                  padding: const pw.EdgeInsets.all(6),
-                  child: pw.Text(rows
-                      .fold<double>(0, (a, b) => a + (b["netSale"] ?? 0))
-                      .toStringAsFixed(2))),
-            ]),
-          ],
-        ),
       ],
     );
   }
 
 
   // --------------------------
-  // SHOW DETAILS (WITH PRINT BUTTON)
+  // SHOW DETAILS (WITH PRINT BUTTON) — SAME AS YOURS
   // --------------------------
   void _showDetails(Map<String, dynamic> data) {
     final bool isLoadsheet = showLoadsheets;
@@ -377,22 +587,35 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
           child: SingleChildScrollView(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(isLoadsheet ? "Loadsheet Details" : "DSR Details",
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               Text("User: ${data['userEmail']}"),
               Text("Date: ${data['dateStr']}"),
               const Divider(),
-
-              // DETAILS TABLE
               isLoadsheet ? _loadsheetTable(data) : _dsrTable(data),
-
               const SizedBox(height: 20),
-              Center(
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.print, color: Colors.white),
-                  label: const Text("Print This Report"),
-                  onPressed: () => _printSingle(data),
-                ),
-              )
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit),
+                    label: const Text("Edit"),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      showLoadsheets
+                          ? _editLoadsheet(data)
+                          : _editDsr(data);
+                    },
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.print),
+                    label: const Text("Print"),
+                    onPressed: () => _printSingle(data),
+                  ),
+                ],
+              ),
+
+
             ]),
           ),
         );
@@ -462,7 +685,7 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
   }
 
   // --------------------------
-  // MAIN UI
+  // MAIN UI (UNCHANGED)
   // --------------------------
   @override
   Widget build(BuildContext context) {
@@ -473,127 +696,147 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
         title: Text(showLoadsheets ? "Loadsheet Reports" : "DSR Reports"),
         actions: [
           IconButton(
-              icon: const Icon(Icons.print), tooltip: "Print All", onPressed: () async {
-            final snap = await q.get();
-            await _printAllReports(snap.docs);
-          }),
+            icon: const Icon(Icons.print),
+            tooltip: "Print All",
+            onPressed: _printingAll
+                ? null
+                : () async {
+              final snap = await q.get();
+              await _printAllReports(snap.docs);
+            },
+          ),
           IconButton(
-              icon: const Icon(Icons.swap_horiz),
-              tooltip: "Switch",
-              onPressed: () => setState(() => showLoadsheets = !showLoadsheets)),
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: "Switch",
+            onPressed: () => setState(() => showLoadsheets = !showLoadsheets),
+          ),
         ],
       ),
-
-      body: Column(
+      body: Stack(
         children: [
-          // USER FILTER
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: isLoadingUsers
-                ? const CircularProgressIndicator()
-                : DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                  labelText: "Select User",
-                  border: OutlineInputBorder()),
-              value: selectedUserId,
-              items: [
-                const DropdownMenuItem(value: null, child: Text("All Users")),
-                ...userList.map(
-                        (u) => DropdownMenuItem(value: u["uid"], child: Text(u["username"]))),
-              ],
-              onChanged: (v) => setState(() => selectedUserId = v),
-            ),
-          ),
+          Column(
+            children: [
+              // USER FILTER (UNCHANGED)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: isLoadingUsers
+                    ? const CircularProgressIndicator()
+                    : DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(
+                      labelText: "Select User",
+                      border: OutlineInputBorder()),
+                  value: selectedUserId,
+                  items: [
+                    const DropdownMenuItem(
+                        value: null, child: Text("All Users")),
+                    ...userList.map((u) => DropdownMenuItem(
+                        value: u["uid"], child: Text(u["username"]))),
+                  ],
+                  onChanged: (v) => setState(() => selectedUserId = v),
+                ),
+              ),
 
-          // DATE FILTER
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(children: [
+              // DATE FILTER (UNCHANGED)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Row(children: [
+                  Expanded(
+                    child: OutlinedButton(
+                        child: Text(selectedDate == null
+                            ? "Select Date"
+                            : DateFormat("dd-MM-yyyy")
+                            .format(selectedDate!)),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2024),
+                              lastDate: DateTime(2030));
+                          if (picked != null) {
+                            setState(() {
+                              selectedDate = picked;
+                              showAllDates = false;
+                            });
+                          }
+                        }),
+                  ),
+                  Switch(
+                      value: showAllDates,
+                      onChanged: (v) => setState(() => showAllDates = v)),
+                  const Text("All"),
+                ]),
+              ),
+
+              // REPORT LIST (UNCHANGED)
               Expanded(
-                child: OutlinedButton(
-                    child: Text(selectedDate == null
-                        ? "Select Date"
-                        : DateFormat("dd-MM-yyyy").format(selectedDate!)),
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime(2024),
-                          lastDate: DateTime(2030));
-                      if (picked != null) {
-                        setState(() {
-                          selectedDate = picked;
-                          showAllDates = false;
-                        });
+                child: StreamBuilder<QuerySnapshot>(
+                    stream: q.snapshots(),
+                    builder: (_, snap) {
+                      if (!snap.hasData) {
+                        return const Center(child: CircularProgressIndicator());
                       }
+
+                      final docs = snap.data!.docs;
+
+                      if (docs.isEmpty) {
+                        return const Center(child: Text("No reports found"));
+                      }
+
+                      return ListView.builder(
+                          itemCount: docs.length,
+                          itemBuilder: (_, i) {
+                            final data =
+                            docs[i].data() as Map<String, dynamic>;
+
+                            String date = data["dateStr"] ?? "-";
+                            String email = data["userEmail"] ?? "-";
+
+                            String subtitle = "";
+                            String trailing = "";
+
+                            if (showLoadsheets) {
+                              final items = List<Map<String, dynamic>>.from(
+                                  data["items"] ?? []);
+                              double total = items.fold(
+                                  0.0, (sum, r) => sum + (r["amount"] ?? 0));
+
+                              subtitle = "Items: ${items.length}";
+                              trailing = _money.format(total);
+                            } else {
+                              final rows = List<Map<String, dynamic>>.from(
+                                  data["rows"] ?? []);
+                              double total = rows.fold(
+                                  0.0, (sum, r) => sum + (r["totalSale"] ?? 0));
+
+                              subtitle = "Rows: ${rows.length}";
+                              trailing = _money.format(total);
+                            }
+
+                            return Card(
+                              child: ListTile(
+                                title: Text("Date: $date"),
+                                subtitle: Text("User: $email\n$subtitle"),
+                                trailing: Text(trailing,
+                                    style: const TextStyle(
+                                        color: Colors.green,
+                                        fontWeight: FontWeight.bold)),
+                                onTap: () => _showDetails(data),
+                              ),
+                            );
+                          });
                     }),
               ),
-              Switch(
-                  value: showAllDates,
-                  onChanged: (v) => setState(() => showAllDates = v)),
-              const Text("All"),
-            ]),
+            ],
           ),
 
-          // REPORT LIST
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-                stream: q.snapshots(),
-                builder: (_, snap) {
-                  if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final docs = snap.data!.docs;
-
-                  if (docs.isEmpty) {
-                    return const Center(child: Text("No reports found"));
-                  }
-
-                  return ListView.builder(
-                      itemCount: docs.length,
-                      itemBuilder: (_, i) {
-                        final data = docs[i].data() as Map<String, dynamic>;
-
-                        String date = data["dateStr"] ?? "-";
-                        String email = data["userEmail"] ?? "-";
-
-                        String subtitle = "";
-                        String trailing = "";
-
-                        if (showLoadsheets) {
-                          final items =
-                          List<Map<String, dynamic>>.from(data["items"] ?? []);
-                          double total = items.fold(
-                              0.0, (sum, r) => sum + (r["amount"] ?? 0));
-
-                          subtitle = "Items: ${items.length}";
-                          trailing = _money.format(total);
-
-                        } else {
-                          final rows =
-                          List<Map<String, dynamic>>.from(data["rows"] ?? []);
-                          double total = rows.fold(
-                              0.0, (sum, r) => sum + (r["totalSale"] ?? 0));
-
-                          subtitle = "Rows: ${rows.length}";
-                          trailing = _money.format(total);
-                        }
-
-                        return Card(
-                          child: ListTile(
-                            title: Text("Date: $date"),
-                            subtitle: Text("User: $email\n$subtitle"),
-                            trailing: Text(trailing,
-                                style: const TextStyle(
-                                    color: Colors.green,
-                                    fontWeight: FontWeight.bold)),
-                            onTap: () => _showDetails(data),
-                          ),
-                        );
-                      });
-                }),
-          ),
+          // ✅ PRINT ALL LOADER OVERLAY
+          if (_printingAll)
+            Container(
+              color: Colors.black45,
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
         ],
       ),
     );

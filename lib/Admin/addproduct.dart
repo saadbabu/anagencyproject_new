@@ -1,310 +1,151 @@
+import 'package:an_agency/Admin/product_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class AddShopScreen extends StatefulWidget {
-  const AddShopScreen({Key? key}) : super(key: key);
+class ProductFormScreen extends StatefulWidget {
+  final String? docId;
+  final Map<String, dynamic>? productData;
+
+  const ProductFormScreen({Key? key, this.docId, this.productData})
+      : super(key: key);
 
   @override
-  State<AddShopScreen> createState() => _AddShopScreenState();
+  State<ProductFormScreen> createState() => _ProductFormScreenState();
 }
 
-class _AddShopScreenState extends State<AddShopScreen> {
+class _ProductFormScreenState extends State<ProductFormScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  // Controllers
-  final TextEditingController _productNameController = TextEditingController();
-  final TextEditingController _dbPriceController = TextEditingController();
-  final TextEditingController _baseSizeController = TextEditingController();
-  final TextEditingController _subSizeController = TextEditingController();
-  final TextEditingController _descriptionController = TextEditingController();
+  final _productName = TextEditingController();
+  final _price = TextEditingController();
+  final _baseSize = TextEditingController();
+  final _subSize = TextEditingController();
+  final _description = TextEditingController();
 
-  // Dropdown values
-  String? selectedCategory;
-  String? selectedSupplier;
-  String? selectedSize;
+  String? category;
+  String? supplier;
+  String? size;
 
-  final List<String> categories = [
-    'Stationery',
-    'Cosmetics',
-    'Consumer',
-    'Electronics',
-    'Others',
-  ];
+  final categories = ['Stationery', 'Cosmetics', 'Consumer', 'Electronics', 'Others'];
+  final sizes = ['Box', 'Jar', 'G', 'MG', 'KG', 'ML', 'L', 'Nil'];
 
-  final List<String> sizeProduct = [
-    'Box',
-    'Jar',
-    'G',
-    'MG',
-    'KG',
-    'ML',
-    'L',
-    'Nil'
-  ];
+  List<String> suppliers = [];
+  bool loadingSuppliers = true;
 
-  List<String> supplierNames = []; // fetched dynamically
-  bool _isLoadingSuppliers = true;
+  bool get isEdit => widget.docId != null;
 
   @override
   void initState() {
     super.initState();
-    _fetchSuppliers();
-  }
+    _loadSuppliers();
 
-  // 🔹 Fetch supplier names from Firestore
-  Future<void> _fetchSuppliers() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('suppliers')
-          .orderBy('name')
-          .get();
-
-      final suppliers =
-      snapshot.docs.map((doc) => doc['name'].toString()).toList();
-
-      setState(() {
-        supplierNames = suppliers;
-        _isLoadingSuppliers = false;
-      });
-    } catch (e) {
-      print("❌ Error fetching suppliers: $e");
-      setState(() => _isLoadingSuppliers = false);
+    if (isEdit && widget.productData != null) {
+      final d = widget.productData!;
+      _productName.text = d['productName'];
+      _price.text = d['dbPrice'];
+      _baseSize.text = d['baseSize'];
+      _subSize.text = d['subSize'];
+      _description.text = d['description'] ?? '';
+      category = d['productCategory'];
+      supplier = d['productSupplier'];
+      size = d['productSize'];
     }
   }
 
-  // 🔹 Submit product to Firestore
-  Future<void> _submitProduct() async {
-    try {
-      await FirebaseFirestore.instance.collection('products').add({
-        'productName': _productNameController.text.trim(),
-        'productCategory': selectedCategory,
-        'productSupplier': selectedSupplier,
-        'productSize': selectedSize,
-        'dbPrice': _dbPriceController.text.trim(),
-        'baseSize': _baseSizeController.text.trim(),
-        'subSize': _subSizeController.text.trim(),
-        'description': _descriptionController.text.trim(),
+  Future<void> _loadSuppliers() async {
+    final snap = await FirebaseFirestore.instance
+        .collection('suppliers')
+        .orderBy('name')
+        .get();
+
+    suppliers = snap.docs.map((e) => e['name'].toString()).toList();
+    setState(() => loadingSuppliers = false);
+  }
+
+  Future<void> _saveProduct() async {
+    final data = {
+      'productName': _productName.text.trim(),
+      'productCategory': category,
+      'productSupplier': supplier,
+      'productSize': size,
+      'dbPrice': _price.text.trim(),
+      'baseSize': _baseSize.text.trim(),
+      'subSize': _subSize.text.trim(),
+      'description': _description.text.trim(),
+    };
+
+    final ref = FirebaseFirestore.instance.collection('products');
+
+    if (isEdit) {
+      await ref.doc(widget.docId).update(data);
+    } else {
+      await ref.add({
+        ...data,
         'createdAt': FieldValue.serverTimestamp(),
       });
-
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('✅ Product added successfully!'),
-        backgroundColor: Colors.green,
-      ));
-
-      _formKey.currentState?.reset();
-      _productNameController.clear();
-      _dbPriceController.clear();
-      _baseSizeController.clear();
-      _subSizeController.clear();
-      _descriptionController.clear();
-      setState(() {
-        selectedCategory = null;
-        selectedSize = null;
-        selectedSupplier = null;
-      });
-    } catch (e) {
-      print('Failed to add product: $e');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to add product: $e'),
-        backgroundColor: Colors.red,
-      ));
     }
-  }
 
-  @override
-  void dispose() {
-    _productNameController.dispose();
-    _dbPriceController.dispose();
-    _baseSizeController.dispose();
-    _subSizeController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isEdit ? '✅ Product updated' : '✅ Product added'),
+        backgroundColor: Colors.green,
+      ),
+    );
+
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("🛒 Add Product"),
-        centerTitle: true,
+        title: Text(isEdit ? '✏️ Edit Product' : '➕ Add Product'),
         backgroundColor: Colors.blue.shade700,
+        actions: [
+          IconButton(
+            tooltip: 'View Products',
+            icon: const Icon(Icons.list_alt),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProductListScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      backgroundColor: Colors.grey.shade100,
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: ListView(
             children: [
-              const Center(
-                child: Text(
-                  'Add Product',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 20),
+              _input(_productName, 'Product Name'),
+              _dropdown('Category', categories, category, (v) => setState(() => category = v)),
+              _input(_price, 'TP Price', number: true),
+              _dropdown('Size / Unit', sizes, size, (v) => setState(() => size = v)),
 
-              // 🔹 Product Name + Category
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _productNameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Product Name',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (v) =>
-                      v!.isEmpty ? 'Enter product name' : null,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: selectedCategory,
-                      items: categories
-                          .map((cat) => DropdownMenuItem(
-                        value: cat,
-                        child: Text(cat),
-                      ))
-                          .toList(),
-                      onChanged: (val) => setState(() => selectedCategory = val),
-                      decoration: const InputDecoration(
-                        labelText: 'Product Category',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (val) =>
-                      val == null ? 'Select category' : null,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // 🔹 Price + Size
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _dbPriceController,
-                      decoration: const InputDecoration(
-                        labelText: 'TP Price',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.number,
-                      validator: (v) => v!.isEmpty ? 'Enter price' : null,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: selectedSize,
-                      items: sizeProduct
-                          .map((sz) => DropdownMenuItem(
-                        value: sz,
-                        child: Text(sz),
-                      ))
-                          .toList(),
-                      onChanged: (val) => setState(() => selectedSize = val),
-                      decoration: const InputDecoration(
-                        labelText: 'Size / Unit',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (val) =>
-                      val == null ? 'Select size' : null,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // 🔹 Supplier (Dynamic)
-              _isLoadingSuppliers
+              loadingSuppliers
                   ? const Center(child: CircularProgressIndicator())
-                  : DropdownButtonFormField<String>(
-                value: selectedSupplier,
-                items: supplierNames
-                    .map((sup) => DropdownMenuItem(
-                  value: sup,
-                  child: Text(sup),
-                ))
-                    .toList(),
-                onChanged: (val) => setState(() => selectedSupplier = val),
-                decoration: const InputDecoration(
-                  labelText: 'Product Supplier',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (val) =>
-                val == null ? 'Select supplier' : null,
-              ),
+                  : _dropdown('Supplier', suppliers, supplier,
+                      (v) => setState(() => supplier = v)),
 
-              const SizedBox(height: 16),
-
-              // 🔹 Base and Sub Size
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _baseSizeController,
-                      decoration: const InputDecoration(
-                        labelText: 'Base Size',
-                        border: OutlineInputBorder(),
-                        hintText: 'Like 1 Box',
-                      ),
-                      validator: (v) =>
-                      v!.isEmpty ? 'Enter base size' : null,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _subSizeController,
-                      decoration: const InputDecoration(
-                        labelText: 'Sub Size',
-                        border: OutlineInputBorder(),
-                        hintText: 'Like 100 items',
-                      ),
-                      validator: (v) =>
-                      v!.isEmpty ? 'Enter sub size' : null,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // 🔹 Description
-              TextFormField(
-                controller: _descriptionController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Product Description',
-                  border: OutlineInputBorder(),
-                ),
-              ),
+              _input(_baseSize, 'Base Size'),
+              _input(_subSize, 'Sub Size'),
+              _input(_description, 'Description', lines: 3),
 
               const SizedBox(height: 24),
-
-              // 🔹 Submit Button
-              ElevatedButton.icon(
+              ElevatedButton(
                 onPressed: () {
-                  if (_formKey.currentState!.validate()) _submitProduct();
+                  if (_formKey.currentState!.validate()) _saveProduct();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue.shade700,
-                  padding:
-                  const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
-                icon: const Icon(Icons.save),
-                label: const Text(
-                  "ADD PRODUCT",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
+                child: Text(isEdit ? 'UPDATE PRODUCT' : 'ADD PRODUCT'),
               ),
             ],
           ),
@@ -312,4 +153,70 @@ class _AddShopScreenState extends State<AddShopScreen> {
       ),
     );
   }
+
+  Widget _input(TextEditingController c, String label,
+      {bool number = false, int lines = 1}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: c,
+        maxLines: lines,
+        keyboardType: number ? TextInputType.number : null,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        // validator: (v) => v!.isEmpty ? 'Required' : null,
+      ),
+    );
+  }
+
+  Widget _dropdown(
+      String label,
+      List<String> items,
+      String? value,
+      Function(String?) onChanged,
+      ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<String>(
+        value: value,
+        isDense: true,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        items: items.map((e) {
+          return DropdownMenuItem<String>(
+            value: e,
+            child: Text(
+              e,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+        }).toList(),
+
+        // 🔴 THIS FIXES SELECTED VALUE OVERFLOW
+        selectedItemBuilder: (context) {
+          return items.map((e) {
+            return Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                e,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList();
+        },
+
+        onChanged: onChanged,
+        validator: (v) => v == null ? 'Required' : null,
+      ),
+    );
+  }
+
+
 }

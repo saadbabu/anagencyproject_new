@@ -345,7 +345,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       final data = doc.data();
       final items = (data["items"] as List?) ?? [];
 
-      for (final it in items) {
+        for (final it in items) {
         if (it is! Map) continue;
 
         final name = (it["Product Name"] ?? "").toString().trim();
