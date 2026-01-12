@@ -6,7 +6,8 @@ import 'Admin/admin_dashboard.dart';
 import 'DSR.dart';
 import 'Admin/addproduct.dart';
 import 'DSR_menu.dart';
-import 'Load_sheet_menu.dart'; // Ensure this file exists for the Inventory tab
+import 'Load_sheet_menu.dart';
+import 'invoice_menu.dart'; // Ensure this file exists for the Inventory tab
 
 void main() {
   runApp(MaterialApp(
@@ -123,6 +124,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const DsrMenuPage()),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.analytics_outlined),
+                  title: const Text("Invoice Reports"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const InvoiceMenuPage()),
                     );
                   },
                 ),

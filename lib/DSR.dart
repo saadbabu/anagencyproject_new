@@ -166,8 +166,8 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
   // SUMMARY CARD
   // ----------------------
   Widget _summaryCard(InvoiceDsrReport report) {
-    final totalSale = report.rows.fold<double>(0, (a, b) => a + b.totalSale);
-    final netSale = report.rows.fold<double>(0, (a, b) => a + b.netSale);
+    final totalSale =_formatInt( report.rows.fold<double>(0, (a, b) => a + b.totalSale));
+    final netSale = _formatInt( report.rows.fold<double>(0, (a, b) => a + b.netSale));
 
     return Card(
       elevation: 3,
@@ -190,9 +190,9 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
               children: [
                 _summaryBox("Total Invoices", "${report.rows.length}"),
                 const SizedBox(width: 14),
-                _summaryBox("Total Sale", totalSale.toStringAsFixed(2)),
+                _summaryBox("Total Sale", totalSale),
                 const SizedBox(width: 14),
-                _summaryBox("Net Sale", netSale.toStringAsFixed(2)),
+                _summaryBox("Net Sale", netSale),
               ],
             ),
           ],

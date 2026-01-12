@@ -34,8 +34,9 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
 
   final TextEditingController _discountController = TextEditingController(text: "0");
   String _discountType = 'percent';
-  double _total = 0.0;
-  double _grandTotal = 0.0;
+  int _total = 0;
+  int _grandTotal = 0;
+
 
   final ScrollController _tableHCtrl = ScrollController();
   final ScrollController _tableVCtrl = ScrollController();
@@ -111,7 +112,12 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
           .where('salesman', isEqualTo: username)
           .get();
 
+      // Now filter by selected area
       final assigned = snap.docs
+          .where((doc) {
+        final customerArea = (doc.data()['area'] ?? '').toString();
+        return customerArea == selectedArea; // Filter by selected area
+      })
           .map((d) => (d.data()['name'] as String?) ?? '')
           .where((name) => name.trim().isNotEmpty)
           .toList();
@@ -128,6 +134,8 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
       setState(() => isLoadingCustomers = false);
     }
   }
+
+
 
   Future<void> _pickSalesDate() async {
     final now = DateTime.now();
@@ -233,8 +241,8 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
       }
       _discountType = 'percent';
       _discountController.text = "0";
-      _total = 0.0;
-      _grandTotal = 0.0;
+      _total = 0;
+      _grandTotal = 0;
     });
   }
 
@@ -413,33 +421,34 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
 
   String _toText(dynamic v) => v == null ? '' : v.toString();
 
-  double _toNum(String s) {
-    final cleaned = s.replaceAll(RegExp(r'[^0-9.]'), '');
-    return double.tryParse(cleaned) ?? 0.0;
+  int _toNum(String s) {
+    final cleaned = s.replaceAll(RegExp(r'[^0-9]'), '');
+    return int.tryParse(cleaned) ?? 0;
   }
 
-  String _formatMoney(double v) => v.toStringAsFixed(2);
+
+  String _formatMoney(int v) => v.toString();
 
   void _recalcRow(int rowIndex) {
     final tp = _toNum(tableControllers[rowIndex][2].text.trim());
     final qty = _toNum(tableControllers[rowIndex][3].text.trim());
     final gross = tp * qty;
-    tableControllers[rowIndex][5].text = gross == 0 ? '' : gross.toStringAsFixed(2);
+    tableControllers[rowIndex][5].text = gross == 0 ? '' : gross.toString();
     _recalcSummary();
   }
 
   void _recalcSummary() {
-    double sum = 0.0;
+    int sum = 0;
     for (var i = 0; i < rowCount; i++) {
       sum += _toNum(tableControllers[i][5].text.trim());
     }
     _total = sum;
 
-    double disc = _toNum(_discountController.text.trim());
+    int disc = _toNum(_discountController.text.trim());
     if (_discountType == 'percent') {
       if (disc < 0) disc = 0;
       if (disc > 100) disc = 100;
-      _grandTotal = _total - (_total * (disc / 100.0));
+      _grandTotal = _total - (_total * (disc ~/ 100.0));
     } else {
       if (disc < 0) disc = 0;
       if (disc > _total) disc = _total;
@@ -550,20 +559,29 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
                       ? const Center(child: CircularProgressIndicator())
                       : (areaList.isEmpty
                       ? const Text("No areas assigned", style: TextStyle(color: Colors.red))
-                      : _dropdown(areaList, selectedArea, (val) => setState(() => selectedArea = val))),
+                      : _dropdown(areaList, selectedArea, (val) {
+                    setState(() {
+                      selectedArea = val;
+                      _fetchCustomersFromFirebase();  // Trigger customer fetch with the selected area
+                    });
+                  })),
                 ),
                 labelFont,
               ),
               _buildDropdownField(
-                  "Select Customer",
-                  SizedBox(
-                          child: isLoadingCustomers
-                              ? const Center(child: CircularProgressIndicator())
-                              : _dropdown(customerList, selectedCustomer,
-                                  (val) => setState(() => selectedCustomer = val)),
-                        ),
-                  labelFont,
+                "Select Customer",
+                SizedBox(
+                  width: double.infinity,
+                  child: isLoadingCustomers
+                      ? const Center(child: CircularProgressIndicator())
+                      : (customerList.isEmpty
+                      ? const Text("No customers found", style: TextStyle(color: Colors.red))
+                      : _dropdown(customerList, selectedCustomer,
+                          (val) => setState(() => selectedCustomer = val))),
                 ),
+                labelFont,
+              ),
+
               SizedBox(height: 16),
                 ],
           ),

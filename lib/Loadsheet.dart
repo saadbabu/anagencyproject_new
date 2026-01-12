@@ -24,7 +24,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xfff5f6fa),
-
       appBar: AppBar(
         backgroundColor: Colors.indigo,
         elevation: 0,
@@ -45,7 +44,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
           ),
         ],
       ),
-
       floatingActionButton: _busy
           ? null
           : Container(
@@ -69,7 +67,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
           label: const Text("Compute Today"),
         ),
       ),
-
       body: _busy
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -77,11 +74,9 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         child: Column(
           children: [
             Expanded(
-              child: _todaySheet == null
-                  ? _empty()
-                  : _sheetView(_todaySheet!),
+              child:
+              _todaySheet == null ? _empty() : _sheetView(_todaySheet!),
             ),
-
             if (_todaySheet != null)
               Padding(
                 padding: const EdgeInsets.only(top: 20),
@@ -105,7 +100,8 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
   // -------------------- MAIN TABLE VIEW --------------------
 
   Widget _sheetView(_LoadSheet s) {
-    final rows = [...s.items]..sort((a, b) => a.productName.compareTo(b.productName));
+    final rows = [...s.items]
+      ..sort((a, b) => a.productName.compareTo(b.productName));
 
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -117,7 +113,8 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
           child: DataTable(
             columnSpacing: 22,
             dataRowHeight: 52,
-            headingRowColor: MaterialStateProperty.all(Colors.indigo.shade50),
+            headingRowColor:
+            MaterialStateProperty.all(Colors.indigo.shade50),
             headingTextStyle: const TextStyle(
               fontWeight: FontWeight.bold,
               color: Colors.indigo,
@@ -172,21 +169,22 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
               ),
             ),
             const SizedBox(height: 18),
-
-            // Clean row with evenly sized tiles
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: tiles.map((t) => Expanded(child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: t,
-              ))).toList(),
+              children: tiles
+                  .map((t) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: t,
+                ),
+              ))
+                  .toList(),
             ),
           ],
         ),
       ),
     );
   }
-
 
   Widget _summaryBox(String title, String value) {
     return Container(
@@ -220,7 +218,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     );
   }
 
-
   // -------------------- CORE ACTIONS --------------------
 
   Future<void> _computeToday() async {
@@ -229,14 +226,12 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       final sheet = await _computeTodayFromInvoices();
       _todaySheet = sheet;
 
-      // auto-save
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
-        final docId = _loadSheetDocId(uid);
-        await db.collection("load_sheets").doc(docId).set(
-          sheet.toFirestore(),
-          SetOptions(merge: false),
-        );
+        await db
+            .collection("load_sheets")
+            .doc(_loadSheetDocId(uid))
+            .set(sheet.toFirestore(), SetOptions(merge: false));
       }
 
       setState(() {});
@@ -254,8 +249,10 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid == null) return;
 
-      final snap =
-      await db.collection("load_sheets").doc(_loadSheetDocId(uid)).get();
+      final snap = await db
+          .collection("load_sheets")
+          .doc(_loadSheetDocId(uid))
+          .get();
 
       if (!snap.exists) {
         _toast("No saved load sheet found");
@@ -265,8 +262,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       _todaySheet = _LoadSheet.fromFirestore(snap.data()!);
       setState(() {});
       _toast("Loaded saved load sheet");
-    } catch (e) {
-      _toast("Load failed: $e", err: true);
     } finally {
       setState(() => _busy = false);
     }
@@ -321,7 +316,6 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     return areas.isEmpty ? "-" : areas.join(", ");
   }
 
-
   // -------------------- COMPUTE FROM INVOICES --------------------
 
   Future<_LoadSheet> _computeTodayFromInvoices() async {
@@ -339,27 +333,26 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
 
     final qty = <String, int>{};
     final bns = <String, int>{};
-    final amount = <String, double>{};
+    final amount = <String, int>{};
 
     for (final doc in q.docs) {
-      final data = doc.data();
-      final items = (data["items"] as List?) ?? [];
+      final items = (doc.data()["items"] as List?) ?? [];
 
-        for (final it in items) {
+      for (final it in items) {
         if (it is! Map) continue;
 
         final name = (it["Product Name"] ?? "").toString().trim();
         if (name.isEmpty) continue;
 
-        final q = _parseIntish((it["QTY"] ?? "0").toString());
-        final tp = _parseDouble((it["TP"] ?? "0").toString());
-        final gross = _parseDouble((it["Gross Total"] ?? "0").toString());
+        final qv = _parseIntish((it["QTY"] ?? "0").toString());
+        final tp = _parseIntish((it["TP"] ?? "0").toString());
+        final gross = _parseIntish((it["Gross Total"] ?? "0").toString());
 
-        qty[name] = (qty[name] ?? 0) + q;
+        qty[name] = (qty[name] ?? 0) + qv;
         bns[name] =
             (bns[name] ?? 0) + _parseIntish((it["BNS"] ?? "0").toString());
         amount[name] =
-            (amount[name] ?? 0.0) + (tp > 0 ? q * tp : gross);
+            (amount[name] ?? 0) + (tp > 0 ? qv * tp : gross);
       }
     }
 
@@ -368,7 +361,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       productName: p,
       qty: qty[p]!,
       bns: bns[p] ?? 0,
-      amount: amount[p] ?? 0.0,
+      amount: amount[p] ?? 0,
     ))
         .toList()
       ..sort((a, b) => a.productName.compareTo(b.productName));
@@ -376,7 +369,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     final totals = _LoadTotals(
       sumQty: rows.fold(0, (a, b) => a + b.qty),
       sumBns: rows.fold(0, (a, b) => a + b.bns),
-      sumAmount: rows.fold(0.0, (a, b) => a + b.amount),
+      sumAmount: rows.fold(0, (a, b) => a + b.amount),
       uniqueProducts: rows.length,
     );
 
@@ -544,7 +537,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
                           _fmtMoney(s.totals.sumAmount),
                           style: pw.TextStyle(
                             fontWeight: pw.FontWeight.bold,
-                            color: PdfColors.green800,
+                            // color: PdfColors.green800,
                           ),
                         ),
                       ),
@@ -561,20 +554,14 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     return pdf;
   }
 
-
-
   // -------------------- UTILS --------------------
 
   (Timestamp, Timestamp) _todayCreatedRange() {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
     final end = start.add(const Duration(days: 1));
-    return (
-    Timestamp.fromDate(start),
-    Timestamp.fromDate(end),
-    );
+    return (Timestamp.fromDate(start), Timestamp.fromDate(end));
   }
-
 
   String _todayStr() {
     final n = DateTime.now();
@@ -590,18 +577,16 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     return d?.round() ?? 0;
   }
 
-  double _parseDouble(String s) {
-    return double.tryParse(s.replaceAll(RegExp(r"[^\d.]"), "")) ?? 0.0;
-  }
-
-  String _fmtMoney(double v) => v.toStringAsFixed(2);
+  String _fmtMoney(int v) => v.toString();
 
   void _toast(String msg, {bool err = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: err ? Colors.red : Colors.indigo,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: err ? Colors.red : Colors.indigo,
+      ),
+    );
   }
 }
 
@@ -652,7 +637,7 @@ class _LoadSheet {
 class _LoadTotals {
   final int sumQty;
   final int sumBns;
-  final double sumAmount;
+  final int sumAmount;
   final int uniqueProducts;
 
   _LoadTotals({
@@ -673,7 +658,7 @@ class _LoadTotals {
     return _LoadTotals(
       sumQty: m["sumQty"],
       sumBns: m["sumBns"],
-      sumAmount: (m["sumAmount"] ?? 0).toDouble(),
+      sumAmount: m["sumAmount"],
       uniqueProducts: m["uniqueProducts"],
     );
   }
@@ -683,7 +668,7 @@ class _LoadRow {
   final String productName;
   final int qty;
   final int bns;
-  final double amount;
+  final int amount;
 
   _LoadRow({
     required this.productName,
@@ -704,7 +689,7 @@ class _LoadRow {
       productName: m["productName"],
       qty: m["qty"],
       bns: m["bns"],
-      amount: (m["amount"] ?? 0).toDouble(),
+      amount: m["amount"],
     );
   }
 }

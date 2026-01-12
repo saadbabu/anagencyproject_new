@@ -14,11 +14,10 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   final _firestore = FirebaseFirestore.instance;
-  final NumberFormat _moneyFormat = NumberFormat("#,##0.00");
 
   String? selectedUserId;
   DateTime? selectedDate;
-  bool showAllDates = true; // 🔹 toggle flag
+  bool showAllDates = true;
 
   List<Map<String, dynamic>> userList = [];
   bool isLoadingUsers = true;
@@ -29,7 +28,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _fetchUsers();
   }
 
-  /// ========= FETCH USERS FROM SESSIONS =========
   Future<void> _fetchUsers() async {
     try {
       final snapshot = await _firestore.collection('sessions').get();
@@ -51,7 +49,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
 
-  /// ========= DELETE INVOICE =========
   Future<void> _deleteInvoice(String docId) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -83,33 +80,32 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
 
-  /// ========= PRINT SINGLE INVOICE =========
   Future<void> _printReport(Map<String, dynamic> invoice) async {
     final pdf = pw.Document();
     pdf.addPage(pw.Page(build: (context) => _buildInvoicePage(invoice)));
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
-  /// ========= PRINT ALL INVOICES FOR CURRENT FILTER =========
   Future<void> _printAllReports(List<QueryDocumentSnapshot> invoices) async {
     if (invoices.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text("No invoices found for the current filter.")));
       return;
     }
-
     final pdf = pw.Document();
     for (var doc in invoices) {
       final data = doc.data() as Map<String, dynamic>;
       pdf.addPage(pw.Page(build: (context) => _buildInvoicePage(data)));
     }
-
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
-  /// ========= BUILD PDF PAGE =========
   pw.Widget _buildInvoicePage(Map<String, dynamic> data) {
     final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
+    // Convert numerical values to integer strings for PDF
+    int totalInt = (num.tryParse(data['total']?.toString() ?? "0") ?? 0).toInt();
+    int grandTotalInt = (num.tryParse(data['grandTotal']?.toString() ?? "0") ?? 0).toInt();
+
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -118,34 +114,33 @@ class _ReportsScreenState extends State<ReportsScreen> {
             children: [
               pw.Text("A.N Agency", style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 5),
-              pw.Text("INVOICE",
-                  style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.Text("INVOICE", style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
             ],
           ),
         ),
         pw.SizedBox(height: 15),
-        pw.Text("Invoice #: ${data['invoiceNumber'] ?? '-'}",
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
+        pw.Text("Invoice #: ${data['invoiceNumber'] ?? '-'}", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
         pw.Text("Customer: ${data['customer'] ?? '-'}"),
         pw.Text("Area: ${data['area'] ?? '-'}"),
         pw.Text("Sales Date: ${data['salesDate'] ?? '-'}"),
-        pw.Text("User Email: ${data['userEmail'] ?? '-'}"),
         pw.SizedBox(height: 10),
         pw.Table.fromTextArray(
-          headers: const ['Product', 'Size', 'TP', 'QTY', 'BNS', 'Gross Total'],
-          data: items
-              .map((e) => [
-            e['Product Name'] ?? '',
-            e['Size'] ?? '',
-            e['TP'] ?? '',
-            e['QTY'] ?? '',
-            e['BNS'] ?? '',
-            e['Gross Total'] ?? '',
-          ])
-              .toList(),
+          headers: const ['Product', 'Size', 'TP', 'QTY', 'BNS', 'Gross'],
+          data: items.map((e) {
+            int tp = (num.tryParse(e['TP']?.toString() ?? "0") ?? 0).toInt();
+            int qty = (num.tryParse(e['QTY']?.toString() ?? "0") ?? 0).toInt();
+            int gross = (num.tryParse(e['Gross Total']?.toString() ?? "0") ?? 0).toInt();
+            return [
+              e['Product Name'] ?? '',
+              e['Size'] ?? '',
+              tp.toString(),
+              qty.toString(),
+              e['BNS'] ?? '0',
+              gross.toString(),
+            ];
+          }).toList(),
           headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
           headerDecoration: pw.BoxDecoration(color: PdfColors.blue),
-          cellAlignment: pw.Alignment.centerLeft,
         ),
         pw.SizedBox(height: 15),
         pw.Align(
@@ -153,13 +148,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.end,
             children: [
-              pw.Text("TOTAL: ${_moneyFormat.format(data['total'] ?? 0)}"),
-              pw.Text(
-                  "DISCOUNT: ${data['discountType'] == 'percent' ? '${data['discountPercent']}%' : 'PKR ${data['discountValue']}'}"),
-              pw.Text(
-                "GRAND TOTAL: ${_moneyFormat.format(data['grandTotal'] ?? 0)}",
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              ),
+              pw.Text("TOTAL: $totalInt"),
+              pw.Text("DISCOUNT: ${data['discountType'] == 'percent' ? '${data['discountPercent']}%' : '${data['discountValue']}'}"),
+              pw.Text("GRAND TOTAL: $grandTotalInt", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
             ],
           ),
         ),
@@ -167,24 +158,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
     );
   }
 
-  /// ========= SHOW INVOICE DETAILS =========
   void _showInvoiceDetails(String docId, Map<String, dynamic> data) {
     final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
+    int totalInt = (num.tryParse(data['total']?.toString() ?? "0") ?? 0).toInt();
+    int grandTotalInt = (num.tryParse(data['grandTotal']?.toString() ?? "0") ?? 0).toInt();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (context) => Padding(
         padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Invoice #${data['invoiceNumber']}',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('Invoice #${data['invoiceNumber']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Text('Customer: ${data['customer']}'),
               Text('Area: ${data['area']}'),
@@ -195,23 +185,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 child: DataTable(
                   columns: const [
                     DataColumn(label: Text('Product')),
-                    DataColumn(label: Text('Size')),
                     DataColumn(label: Text('TP')),
                     DataColumn(label: Text('Qty')),
-                    DataColumn(label: Text('BNS')),
-                    DataColumn(label: Text('Gross Total')),
+                    DataColumn(label: Text('Gross')),
                   ],
                   rows: items.map((e) {
-                    return DataRow(
-                      cells: [
-                        DataCell(Text(e['Product Name'] ?? '')),
-                        DataCell(Text(e['Size'] ?? '')),
-                        DataCell(Text(e['TP'] ?? '')),
-                        DataCell(Text(e['QTY'] ?? '')),
-                        DataCell(Text(e['BNS'] ?? '')),
-                        DataCell(Text(e['Gross Total'] ?? '')),
-                      ],
-                    );
+                    int tp = (num.tryParse(e['TP']?.toString() ?? "0") ?? 0).toInt();
+                    int qty = (num.tryParse(e['QTY']?.toString() ?? "0") ?? 0).toInt();
+                    int gross = (num.tryParse(e['Gross Total']?.toString() ?? "0") ?? 0).toInt();
+                    return DataRow(cells: [
+                      DataCell(Text(e['Product Name'] ?? '')),
+                      DataCell(Text(tp.toString())),
+                      DataCell(Text(qty.toString())),
+                      DataCell(Text(gross.toString())),
+                    ]);
                   }).toList(),
                 ),
               ),
@@ -221,14 +208,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text("TOTAL: Rs. ${_moneyFormat.format(data['total'] ?? 0)}"),
-                    Text(
-                        "DISCOUNT: ${data['discountType'] == 'percent' ? '${data['discountPercent']}%' : 'PKR ${data['discountValue']}'}"),
-                    Text(
-                      "GRAND TOTAL: Rs. ${_moneyFormat.format(data['grandTotal'] ?? 0)}",
-                      style: const TextStyle(
-                          color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
+                    Text("TOTAL: Rs. $totalInt"),
+                    Text("DISCOUNT: ${data['discountType'] == 'percent' ? '${data['discountPercent']}%' : 'Rs. ${data['discountValue']}'}"),
+                    Text("GRAND TOTAL: Rs. $grandTotalInt", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16)),
                   ],
                 ),
               ),
@@ -242,17 +224,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                     onPressed: () => _printReport(data),
                   ),
-                  // EDIT
                   ElevatedButton.icon(
                     icon: const Icon(Icons.edit, color: Colors.white),
                     label: const Text("Edit"),
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
                     onPressed: () {
-                      Navigator.pop(context); // close bottom sheet
+                      Navigator.pop(context);
                       _showEditInvoicePopup(docId, data);
                     },
                   ),
-
                   ElevatedButton.icon(
                     icon: const Icon(Icons.delete, color: Colors.white),
                     label: const Text("Delete"),
@@ -276,48 +256,34 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final areaCtrl = TextEditingController(text: data['area'] ?? '');
     final dateCtrl = TextEditingController(text: data['salesDate'] ?? '');
 
-    // ===== ITEMS LIST =====
-    List<Map<String, dynamic>> items =
-    List<Map<String, dynamic>>.from(data["items"] ?? []);
+    List<Map<String, dynamic>> items = List<Map<String, dynamic>>.from(data["items"] ?? []);
 
-    // ===== SAFE DISCOUNT PARSING =====
-    num discountPercent =
-        num.tryParse(data['discountPercent']?.toString() ?? "0") ?? 0;
-
-    num discountValue =
-        num.tryParse(data['discountValue']?.toString() ?? "0") ?? 0;
-
+    int discountPercent = int.tryParse(data['discountPercent']?.toString() ?? "0") ?? 0;
+    int discountValue = int.tryParse(data['discountValue']?.toString() ?? "0") ?? 0;
     String discountType = data['discountType']?.toString() ?? "flat";
 
-    // =======================================================
-    // FUNCTIONS FOR TOTAL CALCULATION
-    // =======================================================
-
-    num calculateTotal() {
-      num total = 0;
+    int calculateTotal() {
+      int total = 0;
       for (var item in items) {
-        num gross = num.tryParse(item["Gross Total"]?.toString() ?? "0") ?? 0;
-        total += gross;
+        total += (num.tryParse(item["Gross Total"]?.toString() ?? "0") ?? 0).toInt();
       }
       return total;
     }
 
-    num calculateGrandTotal() {
-      num total = calculateTotal();
-      if (discountType == "percent") {
-        return total - (total * discountPercent / 100);
-      } else {
-        return total - discountValue;
-      }
+    int calculateGrandTotal() {
+      final total = calculateTotal();
+      // Use integer division ~/ for whole numbers
+      return discountType == "percent"
+          ? total - ((total * discountPercent) ~/ 100)
+          : total - discountValue;
     }
 
     void recalcRow(int i) {
-      num tp = num.tryParse(items[i]["TP"]?.toString() ?? "0") ?? 0;
-      num qty = num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0;
-      items[i]["Gross Total"] = (tp * qty).toStringAsFixed(2);
+      int tp = (num.tryParse(items[i]["TP"]?.toString() ?? "0") ?? 0).toInt();
+      int qty = (num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0).toInt();
+      // Update Gross Total as an integer string
+      items[i]["Gross Total"] = (tp * qty).toString();
     }
-
-    // =======================================================
 
     showDialog(
       context: context,
@@ -333,47 +299,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    // CUSTOMER
-                    TextField(
-                      controller: customerCtrl,
-                      decoration: const InputDecoration(labelText: "Customer"),
-                    ),
-
-                    // AREA
-                    TextField(
-                      controller: areaCtrl,
-                      decoration: const InputDecoration(labelText: "Area"),
-                    ),
-
-                    // DATE
+                    TextField(controller: customerCtrl, decoration: const InputDecoration(labelText: "Customer")),
+                    TextField(controller: areaCtrl, decoration: const InputDecoration(labelText: "Area")),
                     TextField(
                       controller: dateCtrl,
                       readOnly: true,
-                      decoration: const InputDecoration(
-                        labelText: "Sales Date",
-                        suffixIcon: Icon(Icons.date_range),
-                      ),
+                      decoration: const InputDecoration(labelText: "Sales Date", suffixIcon: Icon(Icons.date_range)),
                       onTap: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime(2023),
-                          lastDate: DateTime(2030),
-                        );
-                        if (picked != null) {
-                          dateCtrl.text =
-                              DateFormat("dd-MM-yyyy").format(picked);
-                        }
+                        final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2023), lastDate: DateTime(2030));
+                        if (picked != null) dateCtrl.text = DateFormat("dd-MM-yyyy").format(picked);
                       },
                     ),
-
                     const SizedBox(height: 15),
                     const Divider(),
-                    const Text("Invoice Items",
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const Text("Invoice Items", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 10),
-
-                    // ========= ITEMS LIST ==========
                     Column(
                       children: List.generate(items.length, (i) {
                         return Card(
@@ -385,19 +325,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               children: [
                                 TextField(
                                   decoration: const InputDecoration(labelText: "Product Name"),
-                                  controller: TextEditingController(
-                                      text: items[i]["Product Name"]?.toString() ?? ""),
+                                  controller: TextEditingController(text: items[i]["Product Name"]?.toString() ?? ""),
                                   onChanged: (v) => items[i]["Product Name"] = v,
                                 ),
-
                                 Row(
                                   children: [
                                     Expanded(
                                       child: TextField(
                                         decoration: const InputDecoration(labelText: "TP"),
                                         keyboardType: TextInputType.number,
-                                        controller: TextEditingController(
-                                            text: items[i]["TP"]?.toString() ?? "0"),
+                                        controller: TextEditingController(text: items[i]["TP"]?.toString() ?? "0"),
                                         onChanged: (v) {
                                           items[i]["TP"] = v;
                                           recalcRow(i);
@@ -410,8 +347,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                       child: TextField(
                                         decoration: const InputDecoration(labelText: "QTY"),
                                         keyboardType: TextInputType.number,
-                                        controller: TextEditingController(
-                                            text: items[i]["QTY"]?.toString() ?? "0"),
+                                        controller: TextEditingController(text: items[i]["QTY"]?.toString() ?? "0"),
                                         onChanged: (v) {
                                           items[i]["QTY"] = v;
                                           recalcRow(i);
@@ -421,28 +357,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                     ),
                                   ],
                                 ),
-
                                 const SizedBox(height: 6),
-
                                 Align(
                                   alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    "Gross: ${items[i]["Gross Total"]}",
-                                    style: const TextStyle(
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.bold),
-                                  ),
+                                  child: Text("Gross: ${items[i]["Gross Total"]}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                                 ),
-
                                 Align(
                                   alignment: Alignment.centerRight,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () {
-                                      items.removeAt(i);
-                                      setState(() {});
-                                    },
-                                  ),
+                                  child: IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () { items.removeAt(i); setState(() {}); }),
                                 ),
                               ],
                             ),
@@ -450,41 +372,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         );
                       }),
                     ),
-
-                    // ===== Add Product Button =====
                     ElevatedButton.icon(
                       icon: const Icon(Icons.add),
                       label: const Text("Add Product"),
-                      onPressed: () {
-                        setState(() {
-                          items.add({
-                            "Product Name": "",
-                            "TP": "0",
-                            "QTY": "0",
-                            "BNS": "0",
-                            "Gross Total": "0",
-                          });
-                        });
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                      onPressed: () { setState(() { items.add({"Product Name": "", "TP": "0", "QTY": "0", "BNS": "0", "Gross Total": "0"}); }); },
                     ),
-
                     const Divider(),
-
-                    // ================= TOTALS DISPLAY =====================
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text("Total: ${calculateTotal().toStringAsFixed(2)}"),
-                          Text(
-                              "Discount: ${discountType == 'percent' ? '$discountPercent%' : discountValue}"),
-                          Text(
-                            "Grand Total: ${calculateGrandTotal().toStringAsFixed(2)}",
-                            style: const TextStyle(
-                                color: Colors.green, fontWeight: FontWeight.bold),
-                          ),
+                          Text("Total: ${calculateTotal()}"),
+                          Text("Discount: ${discountType == 'percent' ? '$discountPercent%' : discountValue}"),
+                          Text("Grand Total: ${calculateGrandTotal()}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -492,21 +393,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
               ),
             ),
-
-            // ================= SAVE / CANCEL ACTIONS ======================
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
-              ),
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
                 child: const Text("Save"),
                 onPressed: () async {
-                  await FirebaseFirestore.instance
-                      .collection("invoices")
-                      .doc(docId)
-                      .update({
+                  await FirebaseFirestore.instance.collection("invoices").doc(docId).update({
                     "customer": customerCtrl.text.trim(),
                     "area": areaCtrl.text.trim(),
                     "salesDate": dateCtrl.text.trim(),
@@ -518,12 +411,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     "grandTotal": calculateGrandTotal(),
                     "updatedAt": DateTime.now(),
                   });
-
                   Navigator.pop(context);
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Invoice Updated Successfully")),
-                  );
                 },
               ),
             ],
@@ -533,27 +421,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
     );
   }
 
-
-
-
-  /// ========= BUILD QUERY (DATE + USER + TOGGLE) =========
   Query _buildQuery() {
     final dateFormat = DateFormat('dd-MM-yyyy');
     Query query = _firestore.collection('invoices');
-
     if (selectedUserId != null && selectedUserId!.isNotEmpty) {
       query = query.where('userId', isEqualTo: selectedUserId);
     }
-
     if (!showAllDates && selectedDate != null) {
       final formattedDate = dateFormat.format(selectedDate!).trim();
       query = query.where('salesDate', isEqualTo: formattedDate);
     }
-
     return query.orderBy('createdAt', descending: true);
   }
 
-  /// ========= UI =========
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('dd-MM-yyyy');
@@ -566,7 +446,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.print),
-            tooltip: 'Print All Reports',
             onPressed: () async {
               final snapshot = await invoicesQuery.get();
               await _printAllReports(snapshot.docs);
@@ -576,7 +455,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
       ),
       body: Column(
         children: [
-          // DATE + TOGGLE
           Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
@@ -584,112 +462,57 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.date_range),
-                    label: Text(
-                      selectedDate == null
-                          ? "Select Sales Date"
-                          : dateFormat.format(selectedDate!),
-                    ),
+                    label: Text(selectedDate == null ? "Select Sales Date" : dateFormat.format(selectedDate!)),
                     onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: selectedDate ?? DateTime.now(),
-                        firstDate: DateTime(2023),
-                        lastDate: DateTime(2030),
-                      );
-                      if (picked != null) {
-                        setState(() {
-                          selectedDate = picked;
-                          showAllDates = false; // automatically switch off
-                        });
-                      }
+                      final picked = await showDatePicker(context: context, initialDate: selectedDate ?? DateTime.now(), firstDate: DateTime(2023), lastDate: DateTime(2030));
+                      if (picked != null) setState(() { selectedDate = picked; showAllDates = false; });
                     },
                   ),
                 ),
                 const SizedBox(width: 10),
-                Switch(
-                  activeColor: Colors.blueAccent,
-                  value: showAllDates,
-                  onChanged: (val) {
-                    setState(() => showAllDates = val);
-                  },
-                ),
-                const Text("Show All Dates"),
+                Switch(activeColor: Colors.blueAccent, value: showAllDates, onChanged: (val) => setState(() => showAllDates = val)),
+                const Text("Show All"),
               ],
             ),
           ),
-
-          // USER DROPDOWN
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: isLoadingUsers
                 ? const CircularProgressIndicator()
                 : DropdownButtonFormField<String>(
               value: selectedUserId,
-              decoration: const InputDecoration(
-                labelText: "Filter by User",
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              ),
+              decoration: const InputDecoration(labelText: "Filter by User", border: OutlineInputBorder()),
               items: [
-                const DropdownMenuItem<String>(
-                  value: null,
-                  child: Text("All Users"),
-                ),
-                ...userList.map((u) {
-                  return DropdownMenuItem<String>(
-                    value: u['uid']?.toString() ?? '',
-                    child: Text("${u['username']} (${u['email']})"),
-                  );
-                }).toList(),
+                const DropdownMenuItem<String>(value: null, child: Text("All Users")),
+                ...userList.map((u) => DropdownMenuItem<String>(value: u['uid']?.toString() ?? '', child: Text("${u['username']} (${u['email']})"))).toList(),
               ],
-              onChanged: (val) {
-                setState(() => selectedUserId = val!.isEmpty ? null : val);
-              },
+              onChanged: (val) => setState(() => selectedUserId = val!.isEmpty ? null : val),
             ),
           ),
           const SizedBox(height: 10),
-
-          // INVOICE LIST
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _buildQuery().snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text('No invoices found.'));
-                }
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text('No invoices found.'));
 
                 final invoices = snapshot.data!.docs;
-
                 return ListView.builder(
                   itemCount: invoices.length,
                   itemBuilder: (context, index) {
                     final doc = invoices[index];
                     final data = doc.data() as Map<String, dynamic>;
-                    final total = (data['grandTotal'] ?? 0).toStringAsFixed(2);
-                    final date = data['salesDate'] ?? '-';
-                    final area = data['area'] ?? '-';
-                    final customer = data['customer'] ?? '-';
+                    // Remove decimal from trailing total in list
+                    final total = (num.tryParse(data['grandTotal']?.toString() ?? "0") ?? 0).toInt();
 
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      elevation: 3,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.blueAccent,
-                          child: Text(
-                            data['invoiceNumber'] ?? '',
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
-                          ),
-                        ),
-                        title: Text(customer, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text('Area: $area\nDate: $date'),
-                        trailing: Text('Rs. $total',
-                            style: const TextStyle(
-                                color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+                        leading: CircleAvatar(backgroundColor: Colors.blueAccent, child: Text(data['invoiceNumber'] ?? '', style: const TextStyle(color: Colors.white, fontSize: 12))),
+                        title: Text(data['customer'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('Area: ${data['area']}\nDate: ${data['salesDate']}'),
+                        trailing: Text('Rs. $total', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                         onTap: () => _showInvoiceDetails(doc.id, data),
                       ),
                     );

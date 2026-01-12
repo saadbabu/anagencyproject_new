@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-import 'DSR_detail.dart';
+import 'dsr_detail.dart'; // Ensure this matches your filename
 
 class DsrMenuPage extends StatefulWidget {
   const DsrMenuPage({super.key});
@@ -11,6 +10,7 @@ class DsrMenuPage extends StatefulWidget {
   State<DsrMenuPage> createState() => _DsrMenuPageState();
 }
 
+// Fixed: Changed from __DsrMenuPageState to _DsrMenuPageState
 class _DsrMenuPageState extends State<DsrMenuPage> {
   String? loggedEmail;
 
@@ -24,30 +24,35 @@ class _DsrMenuPageState extends State<DsrMenuPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final sessionSnap =
-    await FirebaseFirestore.instance.collection('sessions').doc(user.uid).get();
+    final sessionSnap = await FirebaseFirestore.instance
+        .collection('sessions')
+        .doc(user.uid)
+        .get();
 
     if (sessionSnap.exists && sessionSnap.data() != null) {
       loggedEmail = sessionSnap.data()!['email'];
     } else {
-      loggedEmail = null;
+      loggedEmail = user.email; // Fallback
     }
-
-    setState(() {});
+    if (mounted) setState(() {});
   }
-
 
   @override
   Widget build(BuildContext context) {
     if (loggedEmail == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text("DSR Reports")),
+        appBar: AppBar(title: const Text("DSR Reports"), backgroundColor: Colors.indigo),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text("DSR Reports")),
+      backgroundColor: const Color(0xfff5f6fa),
+      appBar: AppBar(
+        title: const Text("DSR Reports"),
+        backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
+      ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection("dsr_reports")
@@ -55,34 +60,52 @@ class _DsrMenuPageState extends State<DsrMenuPage> {
             .orderBy("generatedAt", descending: true)
             .snapshots(),
         builder: (context, snap) {
-          if (snap.hasError) return const Center(child: Text("Error loading DSR"));
+          if (snap.hasError) return Center(child: Text("Error: ${snap.error}"));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
 
           final docs = snap.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text("No reports found."));
 
-          if (docs.isEmpty) {
-            return const Center(child: Text("No DSR reports found for your account."));
-          }
-
-          return ListView.builder(
+          return ListView.separated(
+            padding: const EdgeInsets.all(8),
             itemCount: docs.length,
+            separatorBuilder: (context, index) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final data = docs[index].data() as Map<String, dynamic>;
-              final totals = data["totals"] ?? {};
+
+              // Logic aligned with your reference model
+              final List<dynamic> rows = data['rows'] ?? [];
+              int invoiceCount = rows.length;
+              double totalQty = 0;
+
+              for (var row in rows) {
+                final productQtyMap = row['productQty'] as Map? ?? {};
+                productQtyMap.forEach((_, qty) {
+                  if (qty is num) {
+                    totalQty += qty.toDouble();
+                  }
+                });
+              }
 
               return ListTile(
-                leading: const Icon(Icons.analytics, color: Colors.blue),
-                title: Text("DSR - ${data['dateStr']}"),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                leading: CircleAvatar(
+                  backgroundColor: Colors.indigo.shade100,
+                  child: const Icon(Icons.description, color: Colors.indigo),
+                ),
+                title: Text(
+                  "DSR - ${data['dateStr'] ?? 'N/A'}",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
                 subtitle: Text(
-                    "Invoices: ${totals['invoices']} | Qty: ${totals['sumQty']}"),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => DsrDetailPage(data: data),
-                    ),
-                  );
-                },
+                  "Invoices: $invoiceCount | Qty: ${totalQty.toStringAsFixed(0)}",
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => DsrDetailPage(data: data)),
+                ),
               );
             },
           );
