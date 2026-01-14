@@ -430,30 +430,40 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
   String _formatMoney(int v) => v.toString();
 
   void _recalcRow(int rowIndex) {
-    final tp = _toNum(tableControllers[rowIndex][2].text.trim());
-    final qty = _toNum(tableControllers[rowIndex][3].text.trim());
-    final gross = tp * qty;
-    tableControllers[rowIndex][5].text = gross == 0 ? '' : gross.toString();
+    // Use double for the math to get 65.5
+    final tp = double.tryParse(tableControllers[rowIndex][2].text.trim()) ?? 0.0;
+    final qty = double.tryParse(tableControllers[rowIndex][3].text.trim()) ?? 0.0;
+
+    double gross = tp * qty;
+
+    // .floor() will turn 65.50 into 65
+    // .toInt() also works similarly for positive numbers
+    tableControllers[rowIndex][5].text = gross == 0 ? '' : gross.floor().toString();
+
     _recalcSummary();
   }
 
   void _recalcSummary() {
     int sum = 0;
     for (var i = 0; i < rowCount; i++) {
-      sum += _toNum(tableControllers[i][5].text.trim());
+      // Since we now store "65" in the controller, we can parse as int
+      final val = tableControllers[i][5].text.trim();
+      sum += int.tryParse(val) ?? 0;
     }
+
     _total = sum;
 
-    int disc = _toNum(_discountController.text.trim());
+    double disc = double.tryParse(_discountController.text.trim()) ?? 0.0;
+    double calculatedGrandTotal = 0;
+
     if (_discountType == 'percent') {
-      if (disc < 0) disc = 0;
-      if (disc > 100) disc = 100;
-      _grandTotal = _total - (_total * (disc ~/ 100.0));
+      calculatedGrandTotal = _total - (_total * (disc / 100.0));
     } else {
-      if (disc < 0) disc = 0;
-      if (disc > _total) disc = _total;
-      _grandTotal = _total - disc;
+      calculatedGrandTotal = _total - disc;
     }
+
+    // Round the final grand total down to the nearest whole number
+    _grandTotal = calculatedGrandTotal.floor();
 
     setState(() {});
   }
@@ -591,6 +601,7 @@ class _SalesPurchaseScreenState extends State<SalesPurchaseScreen> {
                 alignment: Alignment.centerRight,
                 child: ElevatedButton(
                   onPressed: () async {
+                    print("total amount $_total");
                     await _storeInvoiceInDatabase();
                     await _printInvoice();
                     _generateNewInvoice();
