@@ -74,8 +74,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         child: Column(
           children: [
             Expanded(
-              child:
-              _todaySheet == null ? _empty() : _sheetView(_todaySheet!),
+              child: _todaySheet == null ? _empty() : _sheetView(_todaySheet!),
             ),
             if (_todaySheet != null)
               Padding(
@@ -100,8 +99,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
   // -------------------- MAIN TABLE VIEW --------------------
 
   Widget _sheetView(_LoadSheet s) {
-    final rows = [...s.items]
-      ..sort((a, b) => a.productName.compareTo(b.productName));
+    final rows = [...s.items]..sort((a, b) => a.productName.compareTo(b.productName));
 
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -113,8 +111,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
           child: DataTable(
             columnSpacing: 22,
             dataRowHeight: 52,
-            headingRowColor:
-            MaterialStateProperty.all(Colors.indigo.shade50),
+            headingRowColor: MaterialStateProperty.all(Colors.indigo.shade50),
             headingTextStyle: const TextStyle(
               fontWeight: FontWeight.bold,
               color: Colors.indigo,
@@ -249,10 +246,7 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid == null) return;
 
-      final snap = await db
-          .collection("load_sheets")
-          .doc(_loadSheetDocId(uid))
-          .get();
+      final snap = await db.collection("load_sheets").doc(_loadSheetDocId(uid)).get();
 
       if (!snap.exists) {
         _toast("No saved load sheet found");
@@ -281,14 +275,12 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
       _toast("Print failed: $e", err: true);
     }
   }
+
   Future<String> _getUsernameFromSessionsByEmail(String? email) async {
     if (email == null || email.trim().isEmpty) return "Unknown";
 
-    final snap = await db
-        .collection("sessions")
-        .where("email", isEqualTo: email.trim())
-        .limit(1)
-        .get();
+    final snap =
+    await db.collection("sessions").where("email", isEqualTo: email.trim()).limit(1).get();
 
     if (snap.docs.isEmpty) return "Unknown";
 
@@ -331,9 +323,9 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         .where("userId", isEqualTo: user.uid)
         .get();
 
-    final qty = <String, int>{};
-    final bns = <String, int>{};
-    final amount = <String, int>{};
+    final qtyMap = <String, int>{};
+    final bnsMap = <String, int>{};
+    final amountMap = <String, int>{};
 
     for (final doc in q.docs) {
       final items = (doc.data()["items"] as List?) ?? [];
@@ -345,23 +337,24 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
         if (name.isEmpty) continue;
 
         final qv = _parseIntish((it["QTY"] ?? "0").toString());
-        final tp = _parseIntish((it["TP"] ?? "0").toString());
-        final gross = _parseIntish((it["Gross Total"] ?? "0").toString());
+        final bv = _parseIntish((it["BNS"] ?? "0").toString());
 
-        qty[name] = (qty[name] ?? 0) + qv;
-        bns[name] =
-            (bns[name] ?? 0) + _parseIntish((it["BNS"] ?? "0").toString());
-        amount[name] =
-            (amount[name] ?? 0) + (tp > 0 ? qv * tp : gross);
+        // 🔥 THE FIX: Pull "Gross Total" directly from the item.
+        // This ensures the item amount matches what was actually billed in the invoice.
+        final itemGrossTotal = _parseIntish((it["Gross Total"] ?? "0").toString());
+
+        qtyMap[name] = (qtyMap[name] ?? 0) + qv;
+        bnsMap[name] = (bnsMap[name] ?? 0) + bv;
+        amountMap[name] = (amountMap[name] ?? 0) + itemGrossTotal;
       }
     }
 
-    final rows = qty.keys
+    final rows = qtyMap.keys
         .map((p) => _LoadRow(
       productName: p,
-      qty: qty[p]!,
-      bns: bns[p] ?? 0,
-      amount: amount[p] ?? 0,
+      qty: qtyMap[p]!,
+      bns: bnsMap[p] ?? 0,
+      amount: amountMap[p] ?? 0,
     ))
         .toList()
       ..sort((a, b) => a.productName.compareTo(b.productName));
@@ -383,22 +376,15 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     );
   }
 
-
   // -------------------- PDF --------------------
 
   Future<pw.Document> _buildPdf(_LoadSheet s) async {
     final pdf = pw.Document();
 
-    // 🔹 Fetch username
-    final printedUsername =
-    await _getUsernameFromSessionsByEmail(s.userEmail);
+    final printedUsername = await _getUsernameFromSessionsByEmail(s.userEmail);
+    final printedAreas = s.userId == null ? "-" : await _getAreasForTodayByUser(s.userId!);
 
-    // 🔹 Fetch areas dynamically from invoices
-    final printedAreas =
-    s.userId == null ? "-" : await _getAreasForTodayByUser(s.userId!);
-
-    final rows =
-    [...s.items]..sort((a, b) => a.productName.compareTo(b.productName));
+    final rows = [...s.items]..sort((a, b) => a.productName.compareTo(b.productName));
 
     pdf.addPage(
       pw.MultiPage(
@@ -408,27 +394,21 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
           pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // HEADER
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
                     "A.N Agency",
-                    style: pw.TextStyle(
-                        fontSize: 20, fontWeight: pw.FontWeight.bold),
+                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(
                     "Load Sheet",
-                    style: pw.TextStyle(
-                        fontSize: 20, fontWeight: pw.FontWeight.bold),
+                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(s.dateStr),
                 ],
               ),
-
               pw.SizedBox(height: 6),
-
-              // ✅ USER + AREA (LIKE DSR)
               pw.Text(
                 "User: $printedUsername (${s.userEmail ?? "-"}) | Area: $printedAreas",
                 style: pw.TextStyle(
@@ -437,110 +417,34 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
                   color: PdfColors.grey700,
                 ),
               ),
-
               pw.SizedBox(height: 16),
-
-              // ================= TABLE =================
               pw.Table(
                 border: pw.TableBorder.all(),
                 children: [
-                  // HEADER ROW
                   pw.TableRow(
-                    decoration: const pw.BoxDecoration(
-                      color: PdfColor.fromInt(0xFFEDEDED),
-                    ),
+                    decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDEDED)),
                     children: [
-                      pw.Padding(
-                        padding: pw.EdgeInsets.all(6),
-                        child: pw.Text("Product",
-                            style:
-                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
-                      pw.Padding(
-                        padding: pw.EdgeInsets.all(6),
-                        child: pw.Text("Qty",
-                            style:
-                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
-                      pw.Padding(
-                        padding: pw.EdgeInsets.all(6),
-                        child: pw.Text("BNS",
-                            style:
-                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
-                      pw.Padding(
-                        padding: pw.EdgeInsets.all(6),
-                        child: pw.Text("Amount (PKR)",
-                            style:
-                            pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
+                      _pdfCell("Product", isHeader: true),
+                      _pdfCell("Qty", isHeader: true),
+                      _pdfCell("BNS", isHeader: true),
+                      _pdfCell("Amount (PKR)", isHeader: true),
                     ],
                   ),
-
-                  // DATA ROWS
-                  ...rows.map(
-                        (r) => pw.TableRow(
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text(r.productName),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text(r.qty.toString()),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text(r.bns.toString()),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text(_fmtMoney(r.amount)),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // ✅ TOTAL ROW (LIKE DSR)
-                  pw.TableRow(
-                    decoration: const pw.BoxDecoration(
-                      color: PdfColor.fromInt(0xFFF5F5F5),
-                    ),
+                  ...rows.map((r) => pw.TableRow(
                     children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(6),
-                        child: pw.Text(
-                          "TOTAL",
-                          style:
-                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                        ),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(6),
-                        child: pw.Text(
-                          s.totals.sumQty.toString(),
-                          style:
-                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                        ),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(6),
-                        child: pw.Text(
-                          s.totals.sumBns.toString(),
-                          style:
-                          pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                        ),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(6),
-                        child: pw.Text(
-                          _fmtMoney(s.totals.sumAmount),
-                          style: pw.TextStyle(
-                            fontWeight: pw.FontWeight.bold,
-                            // color: PdfColors.green800,
-                          ),
-                        ),
-                      ),
+                      _pdfCell(r.productName),
+                      _pdfCell(r.qty.toString()),
+                      _pdfCell(r.bns.toString()),
+                      _pdfCell(_fmtMoney(r.amount)),
+                    ],
+                  )),
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFF5F5F5)),
+                    children: [
+                      _pdfCell("TOTAL", isHeader: true),
+                      _pdfCell(s.totals.sumQty.toString(), isHeader: true),
+                      _pdfCell(s.totals.sumBns.toString(), isHeader: true),
+                      _pdfCell(_fmtMoney(s.totals.sumAmount), isHeader: true),
                     ],
                   ),
                 ],
@@ -552,6 +456,16 @@ class _LoadSheetPageState extends State<LoadSheetPage> {
     );
 
     return pdf;
+  }
+
+  pw.Widget _pdfCell(String text, {bool isHeader = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(6),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(fontWeight: isHeader ? pw.FontWeight.bold : pw.FontWeight.normal),
+      ),
+    );
   }
 
   // -------------------- UTILS --------------------

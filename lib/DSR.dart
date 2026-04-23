@@ -16,7 +16,6 @@ class DsrReportsPage extends StatefulWidget {
 class _DsrReportsPageState extends State<DsrReportsPage> {
   final db = FirebaseFirestore.instance;
   InvoiceDsrReport? _todayReport;
-
   bool _busy = false;
 
   @override
@@ -45,39 +44,14 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
           ),
         ],
       ),
-
-      // Floating Buttons
       floatingActionButton: _busy
           ? null
-          : Container(
-        margin: const EdgeInsets.only(bottom: 0, right: 10),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            )
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            FloatingActionButton.extended(
-              backgroundColor: Colors.indigo,
-              icon: const Icon(Icons.calculate_outlined),
-              label: const Text('Compute Today'),
-              onPressed: _computeTodayAndShow,
-            ),
-          ],
-        ),
+          : FloatingActionButton.extended(
+        backgroundColor: Colors.indigo,
+        icon: const Icon(Icons.calculate_outlined),
+        label: const Text('Compute Today'),
+        onPressed: _computeTodayAndShow,
       ),
-
-      // BODY
       body: _busy
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -94,7 +68,6 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
               )
                   : _reportView(_todayReport!),
             ),
-
             if (_todayReport != null)
               Padding(
                 padding: const EdgeInsets.only(top: 20),
@@ -111,7 +84,6 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
   // ----------------------
   Widget _reportView(InvoiceDsrReport report) {
     final rows = report.rows;
-
     final allProducts = <String>{};
     for (var r in rows) allProducts.addAll(r.productQty.keys);
     final productList = allProducts.toList()..sort();
@@ -131,7 +103,6 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
               color: Colors.indigo,
               fontSize: 14,
             ),
-            dataRowHeight: 50,
             columns: [
               const DataColumn(label: Text("ID")),
               const DataColumn(label: Text("Customer")),
@@ -146,9 +117,16 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
                 cells: [
                   DataCell(Text("${i + 1}")),
                   DataCell(Text(r.customer)),
-                  ...productList.map((p) => DataCell(Text("${r.productQty[p] ?? 0}"))),
-
-                  // 🔥 UPDATED LINES → doubles → int
+                  ...productList.map((p) {
+                    int q = r.productQty[p] ?? 0;
+                    int ret = r.returnQty[p] ?? 0;
+                    String display = ret > 0 ? "$q (R:$ret)" : "$q";
+                    return DataCell(
+                      Text(display,
+                          style: TextStyle(
+                              color: ret > 0 ? Colors.red : Colors.black)),
+                    );
+                  }),
                   DataCell(Text(_formatInt(r.totalSale))),
                   DataCell(Text(_formatInt(r.discount))),
                   DataCell(Text(_formatInt(r.netSale))),
@@ -161,13 +139,12 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
     );
   }
 
-
   // ----------------------
   // SUMMARY CARD
   // ----------------------
   Widget _summaryCard(InvoiceDsrReport report) {
-    final totalSale =_formatInt( report.rows.fold<double>(0, (a, b) => a + b.totalSale));
-    final netSale = _formatInt( report.rows.fold<double>(0, (a, b) => a + b.netSale));
+    final totalSale = _formatInt(report.rows.fold<double>(0, (a, b) => a + b.totalSale));
+    final netSale = _formatInt(report.rows.fold<double>(0, (a, b) => a + b.netSale));
 
     return Card(
       elevation: 3,
@@ -212,23 +189,9 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.indigo,
-              ),
-            ),
+            Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.indigo)),
             const SizedBox(height: 6),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            )
+            Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87))
           ],
         ),
       ),
@@ -236,25 +199,99 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
   }
 
   // ----------------------
-  // Core flows
+  // PDF BUILDER
+  // ----------------------
+  Future<pw.Document> _buildPdf(InvoiceDsrReport rep) async {
+    final pdf = pw.Document();
+    final printedUsername = await _getUsernameFromSessionsByEmail(rep.userEmail);
+    final areas = rep.rows.map((r) => r.area).where((a) => a.trim().isNotEmpty).toSet().join(", ");
+
+    final allProducts = <String>{};
+    for (var r in rep.rows) allProducts.addAll(r.productQty.keys);
+    final productList = allProducts.toList()..sort();
+
+    final headers = ["Id", "Customer Name", ...productList, "Total Sale", "Discount", "Net Sale"];
+
+    // Totals Calculation
+    final prodTotals = <String, String>{};
+    for (var p in productList) {
+      int sSum = rep.rows.fold(0, (sum, r) => sum + (r.productQty[p] ?? 0));
+      int rSum = rep.rows.fold(0, (sum, r) => sum + (r.returnQty[p] ?? 0));
+      prodTotals[p] = rSum > 0 ? "$sSum (R:$rSum)" : "$sSum";
+    }
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        margin: const pw.EdgeInsets.all(20),
+        build: (context) => [
+          pw.Header(
+            level: 0,
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("A.N Agency - Daily Sales Report", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 18)),
+                pw.Text(rep.dateStr, style: pw.TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+          pw.Text("User: $printedUsername | Area: ${areas.isEmpty ? "-" : areas}", style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+          pw.SizedBox(height: 10),
+          pw.Table.fromTextArray(
+            headers: headers,
+            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            columnWidths: {
+              0: const pw.FixedColumnWidth(25),
+              1: const pw.IntrinsicColumnWidth(),
+            },
+            data: [
+              ...rep.rows.asMap().entries.map((e) {
+                final r = e.value;
+                return [
+                  "${e.key + 1}",
+                  r.customer,
+                  ...productList.map((p) {
+                    int q = r.productQty[p] ?? 0;
+                    int ret = r.returnQty[p] ?? 0;
+                    return ret > 0 ? "$q (R:$ret)" : "$q";
+                  }),
+                  _formatInt(r.totalSale),
+                  _formatInt(r.discount),
+                  _formatInt(r.netSale),
+                ];
+              }),
+              [
+                "",
+                "TOTAL",
+                ...productList.map((p) => prodTotals[p]!),
+                _formatInt(rep.rows.fold(0.0, (a, b) => a + b.totalSale)),
+                _formatInt(rep.rows.fold(0.0, (a, b) => a + b.discount)),
+                _formatInt(rep.rows.fold(0.0, (a, b) => a + b.netSale)),
+              ]
+            ],
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+            cellAlignment: pw.Alignment.centerLeft,
+          ),
+        ],
+      ),
+    );
+
+    return pdf;
+  }
+
+  // ----------------------
+  // Core Flows
   // ----------------------
   Future<void> _computeTodayAndShow() async {
     setState(() => _busy = true);
     try {
-      // 1. Compute
       final rep = await _computeTodayReportFromInvoices();
       _todayReport = rep;
-
-      // 2. Auto-Save
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final docId = _dsrDocId(user.uid);
-        await db.collection('dsr_reports').doc(docId).set(
-          rep.toFirestore(),
-          SetOptions(merge: false),
-        );
+        await db.collection('dsr_reports').doc(_dsrDocId(user.uid)).set(rep.toFirestore());
       }
-
       setState(() {});
       _toast('Computed & Saved Today’s DSR');
     } catch (e) {
@@ -264,35 +301,14 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
     }
   }
 
-  Future<String> _getUsernameFromSessionsByEmail(String? email) async {
-    if (email == null || email.trim().isEmpty) return "Unknown";
-
-    final snap = await db
-        .collection("sessions")
-        .where("email", isEqualTo: email.trim())
-        .limit(1)
-        .get();
-
-    if (snap.docs.isEmpty) return "Unknown";
-
-    final data = snap.docs.first.data();
-    final username = (data["username"] ?? "").toString().trim();
-    return username.isEmpty ? "Unknown" : username;
-  }
-
-
   Future<void> _loadTodayReport() async {
     setState(() => _busy = true);
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
-
-      final docId = _dsrDocId(user.uid);
-      final snap = await db.collection('dsr_reports').doc(docId).get();
-
+      final snap = await db.collection('dsr_reports').doc(_dsrDocId(user.uid)).get();
       if (snap.exists) {
-        _todayReport = InvoiceDsrReport.fromFirestore(snap.data()!);
-        setState(() {});
+        setState(() => _todayReport = InvoiceDsrReport.fromFirestore(snap.data()!));
         _toast("Loaded saved DSR");
       } else {
         _toast("No DSR saved for today");
@@ -302,354 +318,97 @@ class _DsrReportsPageState extends State<DsrReportsPage> {
     }
   }
 
-  Future<void> _printToday() async {
-    final rep = _todayReport;
-    if (rep == null) return;
-
-    try {
-      final doc = await _buildPdf(rep);
-      await Printing.layoutPdf(
-        onLayout: (format) async => await doc.save(),
-        name: 'DSR_${rep.dateStr}.pdf',
-      );
-    } catch (e) {
-      _toast('Print failed: $e', err: true);
-    }
-  }
-
-  // ----------------------
-  // COMPUTE INVOICE-WISE DSR
-  // ----------------------
   Future<InvoiceDsrReport> _computeTodayReportFromInvoices() async {
     final (start, end) = _todayCreatedRange();
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception("Not logged in");
 
-    final snap = await db
-        .collection('invoices')
+    final snap = await db.collection('invoices')
         .where('createdAt', isGreaterThanOrEqualTo: start)
         .where('createdAt', isLessThan: end)
-        .where('userId', isEqualTo: user.uid)
-        .get();
+        .where('userId', isEqualTo: user.uid).get();
 
     final rows = <InvoiceDsrRow>[];
-
     for (var doc in snap.docs) {
       final data = doc.data();
-      final customer = (data['customer'] ?? '').toString();
       final items = (data['items'] as List?) ?? [];
-      final area = (data['area'] ?? '').toString();
+      final pQty = <String, int>{};
+      final rQty = <String, int>{};
 
-      final totalSale = (data['total'] ?? 0).toDouble();
-      final netSale = (data['grandTotal'] ?? totalSale).toDouble();
-      final discount = totalSale - netSale;
-
-      final productQty = <String, int>{};
       for (var it in items) {
         if (it is! Map) continue;
-        final prod = (it['Product Name'] ?? '').toString();
-        final qty = int.tryParse((it['QTY'] ?? '0').toString()) ?? 0;
-        if (prod.isNotEmpty) productQty[prod] = qty;
+        final name = it['Product Name']?.toString() ?? '';
+        if (name.isEmpty) continue;
+        pQty[name] = int.tryParse(it['QTY']?.toString() ?? '0') ?? 0;
+        rQty[name] = int.tryParse(it['returnedQty']?.toString() ?? '0') ?? 0;
       }
 
+      final ts = (data['total'] ?? 0).toDouble();
+      final ns = (data['grandTotal'] ?? ts).toDouble();
+
       rows.add(InvoiceDsrRow(
-        customer: customer,
-        productQty: productQty,
-        totalSale: totalSale,
-        discount: discount,
-        netSale: netSale,
-        area: area
+        customer: data['customer'] ?? 'Unknown',
+        area: data['area'] ?? '',
+        productQty: pQty,
+        returnQty: rQty,
+        totalSale: ts,
+        discount: ts - ns,
+        netSale: ns,
       ));
     }
-
-    return InvoiceDsrReport(
-      dateStr: _todayStr(),
-      generatedAt: Timestamp.now(),
-      rows: rows,
-      userId: user.uid,
-      userEmail: user.email,
-    );
+    return InvoiceDsrReport(dateStr: _todayStr(), generatedAt: Timestamp.now(), rows: rows, userId: user.uid, userEmail: user.email);
   }
 
-
-  // ----------------------
-  // PDF BUILDER
-  // ----------------------
-  Future<pw.Document> _buildPdf(InvoiceDsrReport rep) async {
-    final pdf = pw.Document();
-
-    // Fetch username using email from sessions
-    final printedUsername = await _getUsernameFromSessionsByEmail(rep.userEmail);
-    final areas = rep.rows
-        .map((r) => r.area)
-        .where((a) => a.trim().isNotEmpty)
-        .toSet()
-        .join(", ");
-
-    final allProducts = <String>{};
-    for (var r in rep.rows) {
-      allProducts.addAll(r.productQty.keys);
+  Future<void> _printToday() async {
+    if (_todayReport == null) return;
+    try {
+      final doc = await _buildPdf(_todayReport!);
+      await Printing.layoutPdf(onLayout: (format) async => await doc.save(), name: 'DSR_${_todayReport!.dateStr}');
+    } catch (e) {
+      _toast('Print failed: $e', err: true);
     }
-    final productList = allProducts.toList()..sort();
-
-    final headers = [
-      "Id",
-      "Customer Name",
-      ...productList,
-      "Total Sale",
-      "Discount",
-      "Net Sale",
-    ];
-
-    // Totals
-    final totalSaleSum = rep.rows.fold<double>(0, (sum, r) => sum + r.totalSale);
-    final netSaleSum = rep.rows.fold<double>(0, (sum, r) => sum + r.netSale);
-    final discountSum = totalSaleSum - netSaleSum;
-
-    pdf.addPage(
-      pw.MultiPage(
-        margin: const pw.EdgeInsets.all(20),
-        build: (context) => [
-          pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text(
-                    "A.N Agency",
-                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.Text(
-                    "Daily Sales Report",
-                    style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.Text(rep.dateStr),
-                ],
-              ),
-
-              pw.SizedBox(height: 6),
-
-              // ✅ Username line
-              pw.Text(
-                "User: $printedUsername (${rep.userEmail ?? "-"})   |   Area: ${areas.isEmpty ? "-" : areas}",
-                style: pw.TextStyle(
-                  fontSize: 11,
-                  color: PdfColors.grey700,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-
-              pw.SizedBox(height: 16),
-            ],
-          ),
-
-          pw.Table(
-            border: pw.TableBorder.all(),
-            children: [
-              // Header row
-              pw.TableRow(
-                decoration: const pw.BoxDecoration(
-                  color: PdfColor.fromInt(0xFFE0E0E0),
-                ),
-                children: headers
-                    .map(
-                      (h) => pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(
-                      h,
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                )
-                    .toList(),
-              ),
-
-              // Data rows
-              ...List.generate(rep.rows.length, (i) {
-                final row = rep.rows[i];
-
-                return pw.TableRow(
-                  children: [
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text("${i + 1}"),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(row.customer),
-                    ),
-
-                    ...productList.map(
-                          (p) => pw.Padding(
-                        padding: const pw.EdgeInsets.all(6),
-                        child: pw.Text("${row.productQty[p] ?? 0}"),
-                      ),
-                    ),
-
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(_formatInt(row.totalSale)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(_formatInt(row.discount)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(_formatInt(row.netSale)),
-                    ),
-                  ],
-                );
-              }),
-
-              // ✅ Totals row
-              pw.TableRow(
-                decoration: const pw.BoxDecoration(
-                  color: PdfColor.fromInt(0xFFF5F5F5),
-                ),
-                children: [
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(""),
-                  ),
-
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(
-                      "TOTAL",
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-
-                  ...productList.map(
-                        (_) => pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(""),
-                    ),
-                  ),
-
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(
-                      _formatInt(totalSaleSum),
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(
-                      _formatInt(discountSum),
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(6),
-                    child: pw.Text(
-                      _formatInt(netSaleSum),
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.green800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-
-    return pdf;
   }
 
+  Future<String> _getUsernameFromSessionsByEmail(String? email) async {
+    if (email == null || email.isEmpty) return "Unknown";
+    final snap = await db.collection("sessions").where("email", isEqualTo: email.trim()).limit(1).get();
+    if (snap.docs.isEmpty) return "Unknown";
+    return snap.docs.first.data()["username"] ?? "Unknown";
+  }
 
-
-  // ----------------------
-  // UTILITIES
-  // ----------------------
   (Timestamp start, Timestamp end) _todayCreatedRange() {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
-    final end = start.add(const Duration(days: 1));
-    return (
-    Timestamp.fromDate(start),
-    Timestamp.fromDate(end),
-    );
+    return (Timestamp.fromDate(start), Timestamp.fromDate(start.add(const Duration(days: 1))));
   }
 
-
-
-  String _todayStr() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  }
-
+  String _todayStr() => DateTime.now().toIso8601String().split('T')[0];
   String _dsrDocId(String uid) => '${_todayStr()}__$uid';
-
+  String _formatInt(double v) => v.toInt().toString();
   void _toast(String msg, {bool err = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: err ? Colors.red : Colors.indigo,
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: err ? Colors.red : Colors.indigo));
   }
 }
-String _formatInt(double value) {
-  if (value % 1 == 0) {
-    return value.toInt().toString();   // 120.0 → "120"
-  }
-  return value.toStringAsFixed(0);     // fallback (rounded)
-}
-
 
 // =======================
 // MODELS
 // =======================
 
 class InvoiceDsrRow {
-  final String customer;
-  final String area; // ✅ NEW
-  final Map<String, int> productQty;
-  final double totalSale;
-  final double discount;
-  final double netSale;
+  final String customer, area;
+  final Map<String, int> productQty, returnQty;
+  final double totalSale, discount, netSale;
 
-  InvoiceDsrRow({
-    required this.customer,
-    required this.area,
-    required this.productQty,
-    required this.totalSale,
-    required this.discount,
-    required this.netSale,
-  });
+  InvoiceDsrRow({required this.customer, required this.area, required this.productQty, required this.returnQty, required this.totalSale, required this.discount, required this.netSale});
 
-  Map<String, dynamic> toMap() {
-    return {
-      'customer': customer,
-      'area': area, // ✅ stored
-      'productQty': productQty.map((k, v) => MapEntry(k, v)),
-      'totalSale': totalSale,
-      'discount': discount,
-      'netSale': netSale,
-    };
-  }
+  Map<String, dynamic> toMap() => {'customer': customer, 'area': area, 'productQty': productQty, 'returnQty': returnQty, 'totalSale': totalSale, 'discount': discount, 'netSale': netSale};
 
-  static InvoiceDsrRow fromMap(Map<String, dynamic> m) {
-    return InvoiceDsrRow(
-      customer: m['customer'],
-      area: (m['area'] ?? '').toString(), // ✅ safe
-      productQty: Map<String, int>.from(m['productQty']),
-      totalSale: (m['totalSale'] ?? 0).toDouble(),
-      discount: (m['discount'] ?? 0).toDouble(),
-      netSale: (m['netSale'] ?? 0).toDouble(),
-    );
-  }
+  static InvoiceDsrRow fromMap(Map<String, dynamic> m) => InvoiceDsrRow(
+      customer: m['customer'], area: m['area'] ?? '',
+      productQty: Map<String, int>.from(m['productQty'] ?? {}),
+      returnQty: Map<String, int>.from(m['returnQty'] ?? {}),
+      totalSale: (m['totalSale'] ?? 0).toDouble(), discount: (m['discount'] ?? 0).toDouble(), netSale: (m['netSale'] ?? 0).toDouble());
 }
-
 
 class InvoiceDsrReport {
   final String dateStr;
@@ -658,33 +417,11 @@ class InvoiceDsrReport {
   final String userId;
   final String? userEmail;
 
-  InvoiceDsrReport({
-    required this.dateStr,
-    required this.generatedAt,
-    required this.rows,
-    required this.userId,
-    this.userEmail,
-  });
+  InvoiceDsrReport({required this.dateStr, required this.generatedAt, required this.rows, required this.userId, this.userEmail});
 
-  Map<String, dynamic> toFirestore() {
-    return {
-      'dateStr': dateStr,
-      'generatedAt': generatedAt,
-      'userId': userId,
-      'userEmail': userEmail,
-      'rows': rows.map((e) => e.toMap()).toList(),
-    };
-  }
+  Map<String, dynamic> toFirestore() => {'dateStr': dateStr, 'generatedAt': generatedAt, 'userId': userId, 'userEmail': userEmail, 'rows': rows.map((e) => e.toMap()).toList()};
 
-  static InvoiceDsrReport fromFirestore(Map<String, dynamic> m) {
-    return InvoiceDsrReport(
-      dateStr: m['dateStr'],
-      generatedAt: m['generatedAt'],
-      rows: (m['rows'] as List)
-          .map((e) => InvoiceDsrRow.fromMap(Map<String, dynamic>.from(e)))
-          .toList(),
-      userId: m['userId'],
-      userEmail: m['userEmail'],
-    );
-  }
+  static InvoiceDsrReport fromFirestore(Map<String, dynamic> m) => InvoiceDsrReport(
+      dateStr: m['dateStr'], generatedAt: m['generatedAt'], userId: m['userId'], userEmail: m['userEmail'],
+      rows: (m['rows'] as List).map((e) => InvoiceDsrRow.fromMap(Map<String, dynamic>.from(e))).toList());
 }

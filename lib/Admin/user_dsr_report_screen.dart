@@ -108,24 +108,124 @@ class _AdminDSRReportsScreenState extends State<AdminDSRReportsScreen> {
     );
   }
 
+  // --- UPDATED PDF DSR (Matches User Side Format) ---
   pw.Widget _pdfDSR(Map<String, dynamic> data, String username, String areas) {
     final rows = List<Map<String, dynamic>>.from(data["rows"] ?? []);
+
+    // 1. Extract unique products from all rows
+    final allProducts = <String>{};
+    for (var r in rows) {
+      final productQty = Map<String, dynamic>.from(r["productQty"] ?? {});
+      allProducts.addAll(productQty.keys);
+    }
+    final productList = allProducts.toList()..sort();
+
+    // 2. Prepare Headers
+    final headers = [
+      "Id",
+      "Customer Name",
+      ...productList,
+      "Total Sale",
+      "Discount",
+      "Net Sale",
+    ];
+
+    // 3. Calculate Totals for the bottom row
+    double totalSaleSum = 0;
+    double netSaleSum = 0;
+    final productTotals = <String, int>{};
+
+    for (var r in rows) {
+      totalSaleSum += (double.tryParse(r["totalSale"].toString()) ?? 0);
+      netSaleSum += (double.tryParse(r["netSale"].toString()) ?? 0);
+
+      final pQty = Map<String, dynamic>.from(r["productQty"] ?? {});
+      for (var p in productList) {
+        // 🔥 Use .toInt() to force the 'num' into an 'int'
+        final int qty = (pQty[p] ?? 0).toInt();
+        productTotals[p] = (productTotals[p] ?? 0) + qty;
+      }
+    }
+    double discountSum = totalSaleSum - netSaleSum;
+
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Header(level: 0, child: pw.Text("A.N Agency - DSR Report")),
-        pw.Text("User: $username | Area: $areas | Date: ${data["dateStr"]}"),
-        pw.SizedBox(height: 10),
-        pw.Table.fromTextArray(
-          headers: const ["Customer", "Total Sale", "Discount", "Net Sale"],
-          data: rows.map((r) => [
-            r["customer"] ?? "",
-            _toCleanInt(r["totalSale"]),
-            _toCleanInt(r["discount"]),
-            _toCleanInt(r["netSale"]),
-          ]).toList(),
+        // Header Section
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text("A.N Agency", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+            pw.Text("Daily Sales Report", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+            pw.Text(data["dateStr"] ?? ""),
+          ],
+        ),
+        pw.SizedBox(height: 5),
+        pw.Text(
+          "User: $username (${data["userEmail"] ?? "-"}) | Area: $areas",
+          style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 15),
+
+        // Table
+        pw.Table(
+          border: pw.TableBorder.all(),
+          children: [
+            // Header Row
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE0E0E0)),
+              children: headers.map((h) => pw.Padding(
+                padding: const pw.EdgeInsets.all(4),
+                child: pw.Text(h, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9)),
+              )).toList(),
+            ),
+
+            // Data Rows
+            ...List.generate(rows.length, (i) {
+              final r = rows[i];
+              final pQty = Map<String, dynamic>.from(r["productQty"] ?? {});
+              return pw.TableRow(
+                children: [
+                  _pdfCellAdmin("${i + 1}"),
+                  _pdfCellAdmin(r["customer"] ?? ""),
+                  ...productList.map((p) => _pdfCellAdmin("${pQty[p] ?? 0}")),
+                  _pdfCellAdmin(_toCleanInt(r["totalSale"])),
+                  _pdfCellAdmin(_toCleanInt(r["discount"])),
+                  _pdfCellAdmin(_toCleanInt(r["netSale"])),
+                ],
+              );
+            }),
+
+            // Totals Row
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFF5F5F5)),
+              children: [
+                _pdfCellAdmin(""),
+                _pdfCellAdmin("TOTAL", isBold: true),
+                ...productList.map((p) => _pdfCellAdmin("${productTotals[p] ?? 0}", isBold: true)),
+                _pdfCellAdmin(_toCleanInt(totalSaleSum), isBold: true),
+                _pdfCellAdmin(_toCleanInt(discountSum), isBold: true),
+                _pdfCellAdmin(_toCleanInt(netSaleSum), isBold: true, color: PdfColors.green800),
+              ],
+            ),
+          ],
         ),
       ],
+    );
+  }
+
+  // Helper for consistent styling
+  pw.Widget _pdfCellAdmin(String text, {bool isBold = false, PdfColor? color}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: 8,
+          fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal,
+          color: color,
+        ),
+      ),
     );
   }
 

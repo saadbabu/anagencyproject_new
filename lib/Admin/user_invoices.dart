@@ -49,6 +49,259 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
 
+  void _showReturnInvoicePopup(String docId, Map<String, dynamic> data) {
+    List<Map<String, dynamic>> items = List<Map<String, dynamic>>.from(data["items"] ?? []);
+
+    // We need to track return quantities. Initialize with 0.
+    // Using a map to store index and return qty
+    Map<int, TextEditingController> returnControllers = {};
+    for (int i = 0; i < items.length; i++) {
+      // If a return was already processed previously, you might have it in data,
+      // but usually, returns are handled as a fresh deduction.
+      returnControllers[i] = TextEditingController(text: "0");
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+
+            int calculateNewTotal() {
+              int newTotal = 0;
+              for (int i = 0; i < items.length; i++) {
+                int tp = (num.tryParse(items[i]["TP"]?.toString() ?? "0") ?? 0).toInt();
+                int originalQty = (num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0).toInt();
+                int returnQty = int.tryParse(returnControllers[i]!.text) ?? 0;
+
+                // Ensure return doesn't exceed original
+                if (returnQty > originalQty) returnQty = originalQty;
+
+                newTotal += (tp * (originalQty - returnQty));
+              }
+              return newTotal;
+            }
+
+            return AlertDialog(
+              title: Text("Process Return - #${data['invoiceNumber']}"),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text("Enter quantity to return for each item:"),
+                      const SizedBox(height: 10),
+                      ...List.generate(items.length, (i) {
+                        int originalQty = (num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0).toInt();
+                        return ListTile(
+                          title: Text(items[i]["Product Name"] ?? "Unknown"),
+                          subtitle: Text("Sold: $originalQty | TP: ${items[i]["TP"]}"),
+                          trailing: SizedBox(
+                            width: 80,
+                            child: TextField(
+                              controller: returnControllers[i],
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: "Return"),
+                              onChanged: (v) => setState(() {}),
+                            ),
+                          ),
+                        );
+                      }),
+                      const Divider(),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text("New Estimated Total:", style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text("Rs. ${calculateNewTotal()}", style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                  onPressed: () async {
+                    // 1. Prepare updated items list
+                    List<Map<String, dynamic>> updatedItems = [];
+                    for (int i = 0; i < items.length; i++) {
+                      int tp = (num.tryParse(items[i]["TP"]?.toString() ?? "0") ?? 0).toInt();
+                      int originalQty = (num.tryParse(items[i]["QTY"]?.toString() ?? "0") ?? 0).toInt();
+                      int returnQty = int.tryParse(returnControllers[i]!.text) ?? 0;
+
+                      if (returnQty > originalQty) returnQty = originalQty;
+
+                      int finalQty = originalQty - returnQty;
+
+                      // Clone item and update quantities
+                      var newItem = Map<String, dynamic>.from(items[i]);
+                      newItem["QTY"] = finalQty.toString();
+                      newItem["Gross Total"] = (finalQty * tp).toString();
+                      // Optional: Track the return inside the item for history
+                      newItem["returnedQty"] = returnQty.toString();
+
+                      updatedItems.add(newItem);
+                    }
+
+                    // 2. Calculate New Totals
+                    int newTotal = 0;
+                    for (var it in updatedItems) {
+                      newTotal += (num.tryParse(it["Gross Total"]?.toString() ?? "0") ?? 0).toInt();
+                    }
+
+                    // Handle Discount logic
+                    int discountPercent = int.tryParse(data['discountPercent']?.toString() ?? "0") ?? 0;
+                    int discountValue = int.tryParse(data['discountValue']?.toString() ?? "0") ?? 0;
+                    String discountType = data['discountType']?.toString() ?? "flat";
+
+                    int newGrandTotal = (discountType == "percent")
+                        ? newTotal - ((newTotal * discountPercent) ~/ 100)
+                        : newTotal - discountValue;
+
+                    // 3. Save to Firestore
+                    await _firestore.collection('invoices').doc(docId).update({
+                      "items": updatedItems,
+                      "total": newTotal,
+                      "grandTotal": newGrandTotal,
+                      "isReturnProcessed": true, // Flag to show it was edited for return
+                      "updatedAt": FieldValue.serverTimestamp(),
+                    });
+
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Return processed and invoice updated.")),
+                    );
+                  },
+                  child: const Text("Confirm Return"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+  Future<void> _adminComputeDsrAndLoadsheet(String userId, String? userEmail, String dateStr) async {
+    setState(() => isLoadingUsers = true); // Using your existing loading variable
+    try {
+      // 1. Fetch all invoices for this user and date
+      // Note: 'salesDate' is used in your invoices collection (format: dd-MM-yyyy)
+      final snap = await _firestore
+          .collection('invoices')
+          .where('userId', isEqualTo: userId)
+          .where('salesDate', isEqualTo: dateStr)
+          .get();
+
+      if (snap.docs.isEmpty) {
+        _toast("No invoices found for this user on $dateStr");
+        return;
+      }
+
+      // --- DATA STRUCTURES FOR CALCULATION ---
+      final List<Map<String, dynamic>> dsrRows = [];
+      final Map<String, Map<String, dynamic>> productAggregation = {}; // For Loadsheet
+      int totalSumQty = 0;
+      int totalSumAmount = 0;
+
+      // 2. Process Invoices
+      for (var doc in snap.docs) {
+        final data = doc.data();
+        final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
+
+        double totalSale = (num.tryParse(data['total']?.toString() ?? "0") ?? 0).toDouble();
+        double netSale = (num.tryParse(data['grandTotal']?.toString() ?? "0") ?? 0).toDouble();
+        double discount = totalSale - netSale;
+
+        final Map<String, int> productQtyMap = {};
+
+        for (var it in items) {
+          final String name = it['Product Name'] ?? 'Unknown';
+          final int qty = (num.tryParse(it['QTY']?.toString() ?? "0") ?? 0).toInt();
+          final int bns = (num.tryParse(it['BNS']?.toString() ?? "0") ?? 0).toInt();
+          final int gross = (num.tryParse(it['Gross Total']?.toString() ?? "0") ?? 0).toInt();
+
+          if (name.isNotEmpty) {
+            productQtyMap[name] = (productQtyMap[name] ?? 0) + qty;
+
+            // Aggregating for Loadsheet
+            if (!productAggregation.containsKey(name)) {
+              productAggregation[name] = {
+                "productName": name,
+                "qty": 0,
+                "bns": 0,
+                "amount": 0,
+              };
+            }
+            productAggregation[name]!["qty"] += qty;
+            productAggregation[name]!["bns"] += bns;
+            productAggregation[name]!["amount"] += gross;
+
+            totalSumQty += qty;
+            totalSumAmount += gross;
+          }
+        }
+
+        // Add to DSR rows
+        dsrRows.add({
+          "customer": data['customer'] ?? 'Unknown',
+          "area": data['area'] ?? '',
+          "totalSale": totalSale,
+          "discount": discount,
+          "netSale": netSale,
+          "productQty": productQtyMap,
+        });
+      }
+
+      // 3. Save DSR Report
+      // user side uses date format yyyy-MM-dd for docId usually, check consistency
+      // Here we use the standard user-side docId format: yyyy-MM-dd__uid
+      final String dateId = DateFormat("yyyy-MM-dd").format(DateFormat("dd-MM-yyyy").parse(dateStr));
+      final String docId = "${dateId}__$userId";
+
+      await _firestore.collection('dsr_reports').doc(docId).set({
+        "dateStr": dateId,
+        "generatedAt": FieldValue.serverTimestamp(),
+        "userId": userId,
+        "userEmail": userEmail,
+        "rows": dsrRows,
+      });
+
+      // 4. Save Loadsheet
+      await _firestore.collection('load_sheets').doc(docId).set({
+        "dateStr": dateId,
+        "generatedAt": FieldValue.serverTimestamp(),
+        "userId": userId,
+        "userEmail": userEmail,
+        "items": productAggregation.values.toList(),
+        "totals": {
+          "sumQty": totalSumQty,
+          "sumAmount": totalSumAmount,
+          "sumBns": 0,
+          "uniqueProducts": productAggregation.length,
+        }
+      });
+
+      _toast("DSR & Loadsheet Updated Successfully");
+    } catch (e) {
+      _toast("Error computing: $e", err: true);
+    } finally {
+      setState(() => isLoadingUsers = false);
+    }
+  }
+
+// Helper Toast
+  void _toast(String msg, {bool err = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: err ? Colors.red : Colors.green),
+    );
+  }
+
   Future<void> _deleteInvoice(String docId) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -231,6 +484,29 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     onPressed: () {
                       Navigator.pop(context);
                       _showEditInvoicePopup(docId, data);
+                    },
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.assignment_return, color: Colors.white),
+                    label: const Text("Return"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                    onPressed: () {
+                      Navigator.pop(context); // Close details sheet
+                      _showReturnInvoicePopup(docId, data); // Open return popup
+                    },
+                  ),
+                  // Inside the Row in _showInvoiceDetails:
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh, color: Colors.white),
+                    label: const Text("Compute"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                    onPressed: () {
+                      // We pass the userId and salesDate found in the current invoice
+                      _adminComputeDsrAndLoadsheet(
+                          data['userId'],
+                          data['userEmail'],
+                          data['salesDate']
+                      );
                     },
                   ),
                   ElevatedButton.icon(
